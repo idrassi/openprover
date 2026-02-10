@@ -6,6 +6,7 @@ import sys
 
 from openprover import __version__
 from .prover import Prover
+from .tui import TUI
 
 
 def main():
@@ -32,12 +33,15 @@ def main():
     if not args.theorem and not args.run_dir:
         parser.error("theorem is required (or use --run-dir to resume an existing run)")
 
+    tui = TUI()
+
     prover = Prover(
         theorem_path=args.theorem,
         model=args.model,
         max_steps=args.max_steps,
         autonomous=args.autonomous,
         verbose=args.verbose,
+        tui=tui,
         isolation=args.isolation,
         run_dir=args.run_dir,
     )
@@ -45,11 +49,21 @@ def main():
     # Signal handling: first ctrl+c → graceful shutdown, second → immediate exit
     def handle_sigint(signum, frame):
         if prover.shutting_down:
-            # Second interrupt — exit immediately
+            tui.cleanup()
             print("\nForce quit.")
             sys.exit(1)
         prover.request_shutdown()
 
     signal.signal(signal.SIGINT, handle_sigint)
 
-    prover.run()
+    try:
+        prover.run()
+    finally:
+        cost = prover.llm.total_cost
+        calls = prover.llm.call_count
+        tui.cleanup()
+        # Print summary to regular stdout after TUI is gone
+        print(f"  {calls} calls · ${cost:.4f}")
+        if (prover.work_dir / "PROOF.md").exists():
+            print(f"  PROOF.md → {prover.work_dir / 'PROOF.md'}")
+        print(f"  {prover.work_dir}")

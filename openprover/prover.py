@@ -2,14 +2,13 @@
 
 import json
 import re
-import select
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import display, prompts
+from . import prompts
 from .llm import LLMClient
+from .tui import TUI
 
 
 def slugify(text: str) -> str:
@@ -21,13 +20,14 @@ def slugify(text: str) -> str:
 
 class Prover:
     def __init__(self, theorem_path: str | None, model: str, max_steps: int,
-                 autonomous: bool, verbose: bool, isolation: bool = False,
-                 run_dir: str | None = None):
+                 autonomous: bool, verbose: bool, tui: TUI,
+                 isolation: bool = False, run_dir: str | None = None):
         self.model = model
         self.max_steps = max_steps
         self.autonomous = autonomous
         self.verbose = verbose
         self.isolation = isolation
+        self.tui = tui
         self.shutting_down = False
         self.step_num = 0
         self.verification_result = ""
@@ -64,14 +64,12 @@ class Prover:
             # Resume from existing run
             self.whiteboard = whiteboard_path.read_text()
             self.theorem_text = theorem_file.read_text()
-            # Count existing steps to resume from correct position
             steps_dir = self.work_dir / "steps"
             existing = [d for d in steps_dir.iterdir()
                         if d.is_dir() and d.name.startswith("step_")]
             self.step_num = len(existing)
             self.resumed = True
         else:
-            # Fresh start — theorem_path is required
             if not theorem_path:
                 raise SystemExit(
                     f"Error: no WHITEBOARD.md in {self.work_dir} — "
@@ -85,10 +83,26 @@ class Prover:
         # LLM client
         self.llm = LLMClient(model, self.work_dir / "archive" / "calls")
 
+        # Derive theorem name for header
+        first_line = self.theorem_text.strip().split("\n")[0][:40]
+        self.theorem_name = first_line.lstrip("#").strip()
+
     def run(self):
-        display.header(self.theorem_text, str(self.work_dir))
+        # Set up TUI
+        self.tui.setup(
+            theorem_name=self.theorem_name,
+            work_dir=str(self.work_dir),
+            step_num=self.step_num,
+            max_steps=self.max_steps,
+        )
+        self.tui.autonomous = self.autonomous
+        self.tui.whiteboard = self.whiteboard
+
         if self.resumed:
-            display.resuming(self.step_num, self.max_steps)
+            self.tui.log(
+                f"Resuming from step {self.step_num}/{self.max_steps}",
+                color="cyan",
+            )
 
         paused = False
         while self.step_num < self.max_steps and not self.shutting_down:
@@ -98,7 +112,7 @@ class Prover:
                 break
             if action == "pause":
                 paused = True
-                display.pausing()
+                self.tui.log("Paused.", color="yellow")
                 break
             if action == "restart":
                 self._reset()
@@ -106,15 +120,27 @@ class Prover:
 
         if not paused:
             self._write_discussion()
-        display.cost_summary(self.llm.total_cost, self.llm.call_count)
 
     def _do_step(self) -> str:
         """Execute one step. Returns: 'continue', 'stop', 'pause', 'restart'."""
         lemma_index = self._build_lemma_index()
 
-        # Check for autonomous mode stdin interrupt
+        # Check for autonomous mode key actions
         if self.autonomous:
-            self._check_stdin_interrupt()
+            action = self.tui.get_pending_action()
+            if action == "quit":
+                self.shutting_down = True
+                return "stop"
+            if action == "pause":
+                return "pause"
+            if action == "restart":
+                return "restart"
+            if action == "interactive":
+                self.autonomous = False
+                self.tui.autonomous = False
+                self.tui.log("→ interactive mode", dim=True)
+            if action == "summarize":
+                self._do_summary()
 
         # Save input whiteboard for this step
         step_dir = self.work_dir / "steps" / f"step_{self.step_num:03d}"
@@ -127,41 +153,41 @@ class Prover:
             if plan is None:
                 if self.shutting_down:
                     return "stop"
-                display.step_error()
+                self.tui.log("Step failed — retrying...", color="red")
                 return "continue"
 
-            display.proposal(self.step_num, self.max_steps, plan)
+            self.tui.show_proposal(plan)
 
-            # Feedback loop
+            # Confirmation loop
             while True:
-                user_input = display.interactive_prompt()
-                cmd = user_input.lower()
-                if cmd in ("q", "quit"):
+                resp = self.tui.get_confirmation()
+                if resp == "":
+                    break  # accept plan
+                if resp == "q":
                     self.shutting_down = True
                     return "stop"
-                if cmd in ("p", "pause"):
+                if resp == "p":
                     return "pause"
-                if cmd in ("r", "restart"):
+                if resp == "r":
                     return "restart"
-                if cmd in ("s", "summarize"):
+                if resp == "s":
                     self._do_summary()
-                    display.proposal(self.step_num, self.max_steps, plan)
+                    self.tui.show_proposal(plan)
                     continue
-                if cmd in ("a", "auto"):
+                if resp == "a":
                     self.autonomous = True
-                    display.mode_switch("autonomous")
+                    self.tui.autonomous = True
+                    self.tui.log("→ autonomous mode", dim=True)
                     break
-                if user_input == "":
-                    break  # accept plan
                 # User gave feedback — replan
-                display.feedback_note(user_input)
-                plan = self._get_plan(lemma_index, human_feedback=user_input)
+                self.tui.log("Replanning...", color="yellow")
+                plan = self._get_plan(lemma_index, human_feedback=resp)
                 if plan is None:
                     if self.shutting_down:
                         return "stop"
-                    display.step_error()
+                    self.tui.log("Step failed — retrying...", color="red")
                     return "continue"
-                display.proposal(self.step_num, self.max_steps, plan)
+                self.tui.show_proposal(plan)
 
             result = self._execute_step(lemma_index, plan=plan)
         else:
@@ -169,16 +195,18 @@ class Prover:
             result = self._execute_step(lemma_index)
 
         if result is None:
-            # Parse failure or error — skip this step, don't kill the run
-            display.step_error()
+            self.tui.log("Step failed — retrying...", color="red")
             return "continue"
 
         action = result.get("action", "continue")
-        display.step_start(self.step_num, self.max_steps, action, result.get("summary", ""))
+        self.tui.step_complete(
+            self.step_num, self.max_steps, action, result.get("summary", ""),
+        )
 
         # Update whiteboard
         self.whiteboard = result.get("whiteboard", self.whiteboard)
         (self.work_dir / "WHITEBOARD.md").write_text(self.whiteboard)
+        self.tui.whiteboard = self.whiteboard
 
         # Handle new/updated lemmas
         self._process_lemmas(result)
@@ -198,26 +226,27 @@ class Prover:
         if action == "declare_proof":
             proof = result.get("proof", "")
             if not proof:
-                display.proof_rejected("No proof text provided")
+                self.tui.log("✗ Proof rejected: No proof text provided", color="red")
                 return "continue"
-            # Auto-verify before accepting
             passed = self._verify_proof(proof)
             if passed:
                 self.proof_text = proof
                 (self.work_dir / "PROOF.md").write_text(proof)
-                display.proof_found()
-                display.proof_written(str(self.work_dir / "PROOF.md"))
+                self.tui.log("✓ Proof found!", color="green", bold=True)
+                self.tui.log(f"→ {self.work_dir / 'PROOF.md'}", dim=True)
                 return "stop"
             else:
-                display.proof_rejected("Verification failed — continuing")
+                self.tui.log("✗ Proof rejected: Verification failed — continuing", color="red")
                 return "continue"
 
         if action == "declare_stuck":
-            # Only allow giving up after using 80% of steps
             if self.step_num < self.max_steps * 0.8:
-                display.stuck_rejected(self.step_num, self.max_steps)
+                self.tui.log(
+                    f"Not giving up yet — only {self.step_num}/{self.max_steps} steps used",
+                    color="yellow",
+                )
                 return "continue"
-            display.stuck()
+            self.tui.log("Stuck — no more ideas.", color="yellow")
             return "stop"
 
         return "continue"
@@ -233,7 +262,7 @@ class Prover:
             verification_result=self.verification_result,
             search_result=self.search_result,
         )
-        display.thinking()
+        self.tui.thinking()
         try:
             resp = self.llm.call(
                 prompt=prompt,
@@ -242,18 +271,17 @@ class Prover:
                 label=f"plan_step_{self.step_num}",
             )
         except RuntimeError as e:
-            print(f"\n  Error: {e}")
+            self.tui.thinking_done()
+            self.tui.log(f"Error: {e}", color="red")
             return None
-        display.thinking_done(resp["duration_ms"])
-
-        if self.verbose:
-            print(f"  [verbose] {resp['result'][:200]}")
+        self.tui.thinking_done()
 
         try:
             return json.loads(resp["result"])
         except json.JSONDecodeError:
-            print(f"  Warning: failed to parse plan JSON, using fallback")
-            return {"action": "continue", "summary": "Continue work", "reasoning": "Fallback due to parse error"}
+            self.tui.log("Warning: failed to parse plan, using fallback", color="yellow")
+            return {"action": "continue", "summary": "Continue work",
+                    "reasoning": "Fallback due to parse error"}
 
     def _execute_step(self, lemma_index: str, plan: dict | None = None) -> dict | None:
         prompt = prompts.format_step_prompt(
@@ -267,108 +295,106 @@ class Prover:
             verification_result=self.verification_result,
             search_result=self.search_result,
         )
-        # Clear pending results after using them
         self.verification_result = ""
         self.search_result = ""
 
-        display.stream_start()
+        self.tui.stream_start()
         try:
             resp = self.llm.call(
                 prompt=prompt,
                 system_prompt=prompts.SYSTEM_PROMPT,
                 label=f"step_{self.step_num}",
-                stream_callback=display.stream_text,
+                stream_callback=self.tui.stream_text,
             )
         except RuntimeError as e:
-            display.stream_end()
-            print(f"\n  Error: {e}")
+            self.tui.stream_end()
+            self.tui.log(f"Error: {e}", color="red")
             return None
-        display.stream_end()
-
-        if self.verbose:
-            print(f"  [verbose] {resp['result'][:300]}")
+        self.tui.stream_end()
 
         result = prompts.parse_step_output(resp["result"])
         if result is None:
-            print(f"  Warning: failed to parse step output")
+            self.tui.log("Warning: failed to parse step output", color="yellow")
         return result
 
     @staticmethod
     def _parse_verdict(text: str) -> bool:
-        """Parse verification result. Looks for 'VERDICT: CORRECT/INCORRECT' line."""
         for line in reversed(text.strip().splitlines()):
             line = line.strip().upper()
             if line == "VERDICT: CORRECT":
                 return True
             if line == "VERDICT: INCORRECT":
                 return False
-        # Fallback: conservative — if no verdict line, assume failed
         return False
 
     def _verify_proof(self, proof: str) -> bool:
-        """Auto-verify a declared proof. Returns True if it passes."""
-        display.verification_start("declared proof")
+        self.tui.log("Verifying: declared proof", color="yellow")
         prompt = prompts.format_verify_prompt(self.theorem_text, proof)
-        display.stream_start()
+        self.tui.stream_start()
         try:
             resp = self.llm.call(
                 prompt=prompt,
                 system_prompt=prompts.VERIFY_SYSTEM_PROMPT,
                 label=f"verify_proof_step_{self.step_num}",
-                stream_callback=display.stream_text,
+                stream_callback=self.tui.stream_text,
             )
-            display.stream_end()
+            self.tui.stream_end()
             self.verification_result = resp["result"]
             passed = self._parse_verdict(resp["result"])
-            display.verification_result(passed)
+            if passed:
+                self.tui.log("✓ Passed", color="green")
+            else:
+                self.tui.log("✗ Issues found", color="red")
             return passed
         except RuntimeError as e:
-            display.stream_end()
-            print(f"  Verification error: {e}")
+            self.tui.stream_end()
+            self.tui.log(f"Verification error: {e}", color="red")
             self.verification_result = f"Verification failed due to error: {e}"
             return False
 
     def _do_verification(self, target: str, content: str):
-        display.verification_start(target)
+        self.tui.log(f"Verifying: {target}", color="yellow")
         prompt = prompts.format_verify_prompt(target, content)
-        display.stream_start()
+        self.tui.stream_start()
         try:
             resp = self.llm.call(
                 prompt=prompt,
                 system_prompt=prompts.VERIFY_SYSTEM_PROMPT,
                 label=f"verify_step_{self.step_num}",
-                stream_callback=display.stream_text,
+                stream_callback=self.tui.stream_text,
             )
-            display.stream_end()
+            self.tui.stream_end()
             self.verification_result = resp["result"]
             passed = self._parse_verdict(resp["result"])
-            display.verification_result(passed)
+            if passed:
+                self.tui.log("✓ Passed", color="green")
+            else:
+                self.tui.log("✗ Issues found", color="red")
         except RuntimeError as e:
-            display.stream_end()
-            print(f"  Verification error: {e}")
+            self.tui.stream_end()
+            self.tui.log(f"Verification error: {e}", color="red")
             self.verification_result = f"Verification failed due to error: {e}"
 
     def _do_literature_search(self, query: str):
-        display.literature_search(query)
+        self.tui.log(f"Searching: {query}", color="magenta")
         prompt = prompts.format_literature_search_prompt(query, self.theorem_text)
-        display.stream_start()
+        self.tui.stream_start()
         try:
             resp = self.llm.call(
                 prompt=prompt,
                 system_prompt=prompts.LITERATURE_SEARCH_SYSTEM_PROMPT,
                 label=f"search_step_{self.step_num}",
                 web_search=True,
-                stream_callback=display.stream_text,
+                stream_callback=self.tui.stream_text,
             )
-            display.stream_end()
+            self.tui.stream_end()
             self.search_result = resp["result"]
         except RuntimeError as e:
-            display.stream_end()
-            print(f"  Search error: {e}")
+            self.tui.stream_end()
+            self.tui.log(f"Search error: {e}", color="red")
             self.search_result = f"Literature search failed: {e}"
 
     def _process_lemmas(self, result: dict):
-        # Handle lemma from step output (text section format)
         if result.get("lemma_name") and result.get("lemma_content"):
             name = slugify(result["lemma_name"]) or "unnamed-lemma"
             lemma_dir = self.work_dir / "lemmas" / name
@@ -388,7 +414,10 @@ class Prover:
             proof_text += content
             (lemma_dir / "PROOF.md").write_text(proof_text + "\n")
 
-            display.lemma_stored(result["lemma_name"], source)
+            if source:
+                self.tui.log(f"+ lemma: {result['lemma_name']} [{source}]", color="green")
+            else:
+                self.tui.log(f"+ lemma: {result['lemma_name']}", color="green")
 
     def _save_step(self, result: dict):
         step_dir = self.work_dir / "steps" / f"step_{self.step_num:03d}"
@@ -419,7 +448,7 @@ class Prover:
 
     def _write_discussion(self):
         if self.shutting_down:
-            display.shutting_down()
+            self.tui.log("Interrupted — writing discussion...", color="yellow")
         lemma_index = self._build_lemma_index()
         prompt = prompts.format_discussion_prompt(
             theorem=self.theorem_text,
@@ -429,28 +458,27 @@ class Prover:
             max_steps=self.max_steps,
             proof=self.proof_text,
         )
-        display.stream_start()
+        self.tui.stream_start()
         try:
             resp = self.llm.call(
                 prompt=prompt,
                 system_prompt=prompts.SYSTEM_PROMPT,
                 label="discussion",
-                stream_callback=display.stream_text,
+                stream_callback=self.tui.stream_text,
             )
-            display.stream_end()
+            self.tui.stream_end()
             (self.work_dir / "DISCUSSION.md").write_text(resp["result"])
-            display.discussion_written(str(self.work_dir / "DISCUSSION.md"))
+            self.tui.log(f"→ {self.work_dir / 'DISCUSSION.md'}", dim=True)
         except RuntimeError as e:
-            display.stream_end()
-            print(f"  Error generating discussion: {e}")
+            self.tui.stream_end()
+            self.tui.log(f"Error generating discussion: {e}", color="red")
             (self.work_dir / "DISCUSSION.md").write_text(
                 f"# Discussion\n\nSession ended after {self.step_num} steps.\n\n"
                 f"## Final Whiteboard\n\n{self.whiteboard}\n"
             )
-            display.discussion_written(str(self.work_dir / "DISCUSSION.md"))
+            self.tui.log(f"→ {self.work_dir / 'DISCUSSION.md'}", dim=True)
 
     def _do_summary(self):
-        """Generate and display a brief progress summary."""
         lemma_index = self._build_lemma_index()
         prompt = prompts.format_summary_prompt(
             theorem=self.theorem_text,
@@ -459,47 +487,32 @@ class Prover:
             step_num=self.step_num,
             max_steps=self.max_steps,
         )
-        display.stream_start()
+        self.tui.stream_start()
         try:
             self.llm.call(
                 prompt=prompt,
                 system_prompt=prompts.SYSTEM_PROMPT,
                 label=f"summary_step_{self.step_num}",
-                stream_callback=display.stream_text,
+                stream_callback=self.tui.stream_text,
             )
-            display.stream_end()
+            self.tui.stream_end()
         except RuntimeError as e:
-            display.stream_end()
-            print(f"  Summary error: {e}")
+            self.tui.stream_end()
+            self.tui.log(f"Summary error: {e}", color="red")
 
     def _reset(self):
-        """Reset prover state for a fresh start."""
         self.step_num = 0
         self.verification_result = ""
         self.search_result = ""
         self.proof_text = ""
         self.whiteboard = prompts.format_initial_whiteboard(self.theorem_text)
         (self.work_dir / "WHITEBOARD.md").write_text(self.whiteboard)
-        # Clear lemmas
+        self.tui.whiteboard = self.whiteboard
         lemmas_dir = self.work_dir / "lemmas"
         if lemmas_dir.exists():
             shutil.rmtree(lemmas_dir)
             lemmas_dir.mkdir()
-        display.restarting()
-
-    def _check_stdin_interrupt(self):
-        """Non-blocking check if user typed something in autonomous mode."""
-        if not sys.stdin.isatty():
-            return
-        try:
-            readable, _, _ = select.select([sys.stdin], [], [], 0)
-            if readable:
-                sys.stdin.readline()
-                self.autonomous = False
-                display.mode_switch("interactive")
-        except (OSError, ValueError):
-            pass
+        self.tui.log("Restarting...", color="cyan")
 
     def request_shutdown(self):
-        """Called by signal handler to request graceful shutdown."""
         self.shutting_down = True

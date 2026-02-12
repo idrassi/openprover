@@ -45,6 +45,7 @@ HELP_TEXT = f"""\
   {DIM}Instant keys (work any time):{RESET}
     t           toggle reasoning trace
     w           toggle whiteboard view
+    a           toggle autonomous mode
     ?           this help
     esc/enter   dismiss overlay
 
@@ -54,7 +55,6 @@ HELP_TEXT = f"""\
     enter       confirm or view step detail
     esc         close detail / deselect
     s           summarize progress
-    a           switch to autonomous mode
     p           pause (resume with --run-dir)
     r           restart proof search
     q           quit
@@ -380,7 +380,7 @@ class TUI:
 
                     ch = chr(b)
                     if self._can_handle_directly():
-                        if ch in ('t', 'w', '?'):
+                        if ch in ('t', 'w', '?', 'a'):
                             self._process_key(ch)
                             i += 1
                             continue
@@ -414,16 +414,19 @@ class TUI:
             self._toggle_view("whiteboard")
         elif ch == '?':
             self._toggle_view("help")
+        elif ch == 'a':
+            self.autonomous = not self.autonomous
+            self._redraw()
         elif ch == '\x1b' and self.view != "main":
             self.view = "main"
             self._redraw()
         elif ch in ('\n', '\r') and self.view != "main":
             self.view = "main"
             self._redraw()
-        elif self.autonomous and ch in ('q', 'p', 'r', 'i', 's'):
+        elif self.autonomous and ch in ('q', 'p', 'r', 's'):
             self.pending_action = {
                 'q': 'quit', 'p': 'pause', 'r': 'restart',
-                'i': 'interactive', 's': 'summarize',
+                's': 'summarize',
             }[ch]
 
     def get_pending_action(self) -> str | None:
@@ -524,8 +527,14 @@ class TUI:
                     continue
 
                 if (self._nav_step == -1 and self._confirm_selected == 0
-                        and ch in ('s', 'a', 'p', 'r', 'q')):
+                        and ch in ('s', 'p', 'r', 'q')):
                     return ch
+
+                if (ch == 'a' and self._nav_step == -1
+                        and self._confirm_selected == 0):
+                    self.autonomous = True
+                    self._redraw()
+                    return "a"
 
                 if ch.isprintable():
                     if self._nav_step >= 0:

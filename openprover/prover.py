@@ -126,6 +126,9 @@ class Prover:
 
     def _do_step(self) -> str:
         """Execute one step. Returns: 'continue', 'stop', 'pause', 'restart'."""
+        # Sync autonomous state from TUI (user may have toggled with 'a')
+        self.autonomous = self.tui.autonomous
+
         lemma_index = self._build_lemma_index()
 
         # Check for autonomous mode key actions
@@ -138,10 +141,6 @@ class Prover:
                 return "pause"
             if action == "restart":
                 return "restart"
-            if action == "interactive":
-                self.autonomous = False
-                self.tui.autonomous = False
-                self.tui.log("→ interactive mode", dim=True)
             if action == "summarize":
                 self._do_summary()
 
@@ -159,38 +158,42 @@ class Prover:
                 self.tui.log("Step failed — retrying...", color="red")
                 return "continue"
 
-            self.tui.show_proposal(plan)
-
-            # Confirmation loop
-            while True:
-                resp = self.tui.get_confirmation()
-                if resp == "":
-                    break  # accept plan
-                if resp == "q":
-                    self.shutting_down = True
-                    return "stop"
-                if resp == "p":
-                    return "pause"
-                if resp == "r":
-                    return "restart"
-                if resp == "s":
-                    self._do_summary()
-                    self.tui.show_proposal(plan)
-                    continue
-                if resp == "a":
-                    self.autonomous = True
-                    self.tui.autonomous = True
-                    self.tui.log("→ autonomous mode", dim=True)
-                    break
-                # User gave feedback — replan
-                self.tui.log("Replanning...", color="yellow")
-                plan = self._get_plan(lemma_index, human_feedback=resp)
-                if plan is None:
-                    if self.shutting_down:
-                        return "stop"
-                    self.tui.log("Step failed — retrying...", color="red")
-                    return "continue"
+            # Check if user toggled autonomous during planning
+            if self.tui.autonomous:
+                self.autonomous = True
+                self.tui.log("→ autonomous mode", dim=True)
+            else:
                 self.tui.show_proposal(plan)
+
+                # Confirmation loop
+                while True:
+                    resp = self.tui.get_confirmation()
+                    if resp == "":
+                        break  # accept plan
+                    if resp == "q":
+                        self.shutting_down = True
+                        return "stop"
+                    if resp == "p":
+                        return "pause"
+                    if resp == "r":
+                        return "restart"
+                    if resp == "s":
+                        self._do_summary()
+                        self.tui.show_proposal(plan)
+                        continue
+                    if resp == "a":
+                        self.autonomous = True
+                        self.tui.log("→ autonomous mode", dim=True)
+                        break
+                    # User gave feedback — replan
+                    self.tui.log("Replanning...", color="yellow")
+                    plan = self._get_plan(lemma_index, human_feedback=resp)
+                    if plan is None:
+                        if self.shutting_down:
+                            return "stop"
+                        self.tui.log("Step failed — retrying...", color="red")
+                        return "continue"
+                    self.tui.show_proposal(plan)
 
             result = self._execute_step(lemma_index, plan=plan)
         else:
@@ -229,7 +232,10 @@ class Prover:
 
         # Handle literature search
         if action == "literature_search" and result.get("search_query"):
-            self._do_literature_search(result["search_query"])
+            if self.isolation:
+                self.tui.log("Literature search skipped (isolation mode)", color="yellow")
+            else:
+                self._do_literature_search(result["search_query"])
             self.tui.update_step_detail(step_idx,
                 f"Query: {result['search_query']}\n\n{self.search_result}")
 
@@ -270,6 +276,7 @@ class Prover:
             lemma_index=lemma_index,
             step_num=self.step_num,
             max_steps=self.max_steps,
+            actions=self.actions,
             human_feedback=human_feedback,
             verification_result=self.verification_result,
             search_result=self.search_result,

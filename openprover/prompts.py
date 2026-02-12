@@ -17,12 +17,21 @@ Your workspace is a WHITEBOARD — terse, dense, like a real whiteboard. Update 
 2. Only extract a lemma when it's genuinely reusable or the proof is non-trivial.
 3. Before diving into a proof attempt, think about whether the approach can actually work. Catch doomed avenues early.
 4. Try small cases and examples first. Build intuition before formalism.
-5. When stuck, consider: can you reduce to a simpler subproblem, or generalize to a setting where the result becomes natural? Changing perspective beats pushing harder on a stuck approach.
+5. When stuck, consider: can you reduce to a simpler subproblem, or generalize to a setting where the result becomes natural? Changing perspective beats pushing harder on a stuck approach. **Prove special cases, weaker versions, or variations of the theorem** — these build insight and often reveal the path to the full proof.
 6. Understand *why* things work, not just *that* they work. If you can't explain the proof idea in one sentence, you don't understand it yet.
 7. Be honest about gaps. A proof sketch with a clearly marked gap is worth more than a hand-wavy "proof." Mark confidence: [high], [med], [low].
 8. Consider whether the statement might be false. A quick counterexample search can save hours.
 9. When the proof works, write it up cleanly and declare it. Don't keep going.
 10. After a literature search, store truly relevant known results as lemmas using the LEMMA section. Cite the source. These become available tools for your proof.
+
+## CRITICAL: literature_search rules
+
+Literature search is a SUPPORT tool, not a crutch. You are a mathematician, not a librarian. Rules:
+- Use literature_search AT MOST 2-3 times per session. Every search costs a step.
+- NEVER search for the same topic twice. Store results as lemmas on first search.
+- NEVER search when you haven't tried to prove things yourself first. Do real math before searching.
+- Prefer DOING MATH over searching: try simplifications, special cases, different proof techniques.
+- If you find yourself wanting to search again, STOP — instead, try to prove a simpler version of the theorem or explore a different angle.
 
 ## CRITICAL: declare_proof rules
 
@@ -37,9 +46,9 @@ If the theorem is hard or open, THAT IS YOUR JOB. You are here to ATTEMPT PROOFS
 ## CRITICAL: declare_stuck rules
 
 NEVER use declare_stuck early. You must use nearly all your allotted steps before even considering it. "This problem is open" or "this is a famous unsolved problem" is NEVER a valid reason to declare_stuck. Instead:
-- Try a different approach
-- Investigate special cases or weaker versions
-- Look for novel angles no one has considered
+- **Prove a simpler version**: weaken hypotheses, strengthen conclusions, try small cases ($n=2,3$), restrict to special cases
+- **Prove a variation**: change the problem slightly — if you can prove the variation, the difference reveals what makes the original hard
+- Try a completely different proof technique (algebraic vs combinatorial vs probabilistic vs topological)
 - Build partial results that constrain the solution
 - Replan from scratch with a completely different strategy
 
@@ -83,7 +92,7 @@ PLAN_SCHEMA = {
 }
 
 # Step output uses text sections instead of JSON schema (more reliable for long math)
-STEP_OUTPUT_FORMAT = """
+_STEP_OUTPUT_BASE = """\
 At the END of your response, output the following sections (these are REQUIRED):
 
 ACTION: <one of: {actions}>
@@ -100,7 +109,13 @@ VERIFY_TARGET: <what to verify>
 VERIFY_CONTENT:
 <self-contained statement+proof to check>
 END_VERIFY_CONTENT
+"""
+
+_STEP_OUTPUT_SEARCH = """\
 SEARCH_QUERY: <what to search for>
+"""
+
+_STEP_OUTPUT_LEMMA = """\
 LEMMA_NAME: <name of lemma to store>
 LEMMA_SOURCE: <citation/URL if from literature, omit if derived>
 LEMMA_CONTENT:
@@ -119,7 +134,11 @@ def _make_plan_schema(actions: list) -> dict:
 
 def step_output_instructions(actions: list) -> str:
     """Return the step output format instructions with the given action list."""
-    return STEP_OUTPUT_FORMAT.format(actions=", ".join(actions))
+    parts = [_STEP_OUTPUT_BASE.format(actions=", ".join(actions))]
+    if "literature_search" in actions:
+        parts.append(_STEP_OUTPUT_SEARCH)
+    parts.append(_STEP_OUTPUT_LEMMA)
+    return "".join(parts)
 
 
 def format_plan_prompt(
@@ -128,6 +147,7 @@ def format_plan_prompt(
     lemma_index: str,
     step_num: int,
     max_steps: int,
+    actions: list | None = None,
     human_feedback: str = "",
     verification_result: str = "",
     search_result: str = "",
@@ -144,6 +164,8 @@ def format_plan_prompt(
         parts.append(f"\n\n# Literature Search Result\n\n{search_result}")
     if human_feedback:
         parts.append(f"\n\n# Human Feedback\n\n{human_feedback}")
+    if actions and "literature_search" not in actions:
+        parts.append("\n\nNote: Literature search / web search is NOT available in this session. Do not attempt it.")
     parts.append(f"\n\nStep {step_num}/{max_steps}. What's the most productive next move?")
     return "".join(parts)
 
@@ -184,6 +206,10 @@ def format_step_prompt(
     parts.append(
         "\n\nKeep the whiteboard terse. Do NOT declare_stuck or declare_proof unless you have genuinely exhausted approaches or have a complete proof."
     )
+    if "literature_search" not in actions:
+        parts.append(
+            "\n\nNote: Literature search / web search is NOT available in this session. Do not attempt it. Work only with what you know."
+        )
     parts.append(step_output_instructions(actions))
     return "".join(parts)
 

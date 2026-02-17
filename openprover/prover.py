@@ -2,7 +2,6 @@
 
 import json
 import re
-import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -83,9 +82,14 @@ class Prover:
         # LLM client
         self.llm = LLMClient(model, self.work_dir / "archive" / "calls")
 
-        # Derive theorem name for header (use full first line)
-        first_line = self.theorem_text.strip().split("\n")[0]
-        self.theorem_name = first_line.lstrip("#").strip()
+        # Derive theorem name for header — collapse full text into one line
+        lines = self.theorem_text.strip().splitlines()
+        parts = []
+        for line in lines:
+            stripped = line.lstrip("#").strip()
+            if stripped:
+                parts.append(stripped)
+        self.theorem_name = " ".join(parts)
 
     def run(self):
         # Set up TUI
@@ -115,9 +119,6 @@ class Prover:
                     paused = True
                     self.tui.log("Paused.", color="yellow")
                     break
-                if action == "restart":
-                    self._reset()
-                    continue
         except KeyboardInterrupt:
             self.shutting_down = True
 
@@ -125,7 +126,7 @@ class Prover:
             self._write_discussion()
 
     def _do_step(self) -> str:
-        """Execute one step. Returns: 'continue', 'stop', 'pause', 'restart'."""
+        """Execute one step. Returns: 'continue', 'stop', 'pause'."""
         # Sync autonomous state from TUI (user may have toggled with 'a')
         self.autonomous = self.tui.autonomous
 
@@ -139,8 +140,6 @@ class Prover:
                 return "stop"
             if action == "pause":
                 return "pause"
-            if action == "restart":
-                return "restart"
             if action == "summarize":
                 self._do_summary()
 
@@ -175,8 +174,6 @@ class Prover:
                         return "stop"
                     if resp == "p":
                         return "pause"
-                    if resp == "r":
-                        return "restart"
                     if resp == "s":
                         self._do_summary()
                         self.tui.show_proposal(plan)
@@ -532,20 +529,6 @@ class Prover:
         except RuntimeError as e:
             self.tui.stream_end()
             self.tui.log(f"Summary error: {e}", color="red")
-
-    def _reset(self):
-        self.step_num = 0
-        self.verification_result = ""
-        self.search_result = ""
-        self.proof_text = ""
-        self.whiteboard = prompts.format_initial_whiteboard(self.theorem_text)
-        (self.work_dir / "WHITEBOARD.md").write_text(self.whiteboard)
-        self.tui.whiteboard = self.whiteboard
-        lemmas_dir = self.work_dir / "lemmas"
-        if lemmas_dir.exists():
-            shutil.rmtree(lemmas_dir)
-            lemmas_dir.mkdir()
-        self.tui.log("Restarting...", color="cyan")
 
     def request_shutdown(self):
         self.shutting_down = True

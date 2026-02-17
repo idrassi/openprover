@@ -56,7 +56,6 @@ HELP_TEXT = f"""\
     esc         close detail / deselect
     s           summarize progress
     p           pause (resume with --run-dir)
-    r           restart proof search
     q           quit
 
   {DIM}In autonomous mode all keys are instant.{RESET}
@@ -312,14 +311,19 @@ class TUI:
         if self.view == "main":
             ch = SPINNER[self._spinner_tick]
             with self._write_lock:
+                # Don't overwrite trace text; only spin when no trace yet
+                if not self._spinner_label or self.trace_buf:
+                    return
                 self._write_raw(f'\r\033[2K  {DIM}{ch} {self._spinner_label}{RESET}')
                 sys.stdout.flush()
 
     def _stop_spinner(self):
         """Clear spinner from screen, reset label."""
-        if self._spinner_label and self.view == "main":
-            self._write('\r\033[2K')
-        self._spinner_label = ""
+        with self._write_lock:
+            if self._spinner_label and self.view == "main":
+                self._write_raw('\r\033[2K')
+                sys.stdout.flush()
+            self._spinner_label = ""
 
     # ── Streaming ───────────────────────────────────────────────
 
@@ -423,9 +427,9 @@ class TUI:
         elif ch in ('\n', '\r') and self.view != "main":
             self.view = "main"
             self._redraw()
-        elif self.autonomous and ch in ('q', 'p', 'r', 's'):
+        elif self.autonomous and ch in ('q', 'p', 's'):
             self.pending_action = {
-                'q': 'quit', 'p': 'pause', 'r': 'restart',
+                'q': 'quit', 'p': 'pause',
                 's': 'summarize',
             }[ch]
 
@@ -527,7 +531,7 @@ class TUI:
                     continue
 
                 if (self._nav_step == -1 and self._confirm_selected == 0
-                        and ch in ('s', 'p', 'r', 'q')):
+                        and ch in ('s', 'p', 'q')):
                     return ch
 
                 if (ch == 'a' and self._nav_step == -1

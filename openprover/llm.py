@@ -140,7 +140,7 @@ class LLMClient:
                 event = msg.get("event", {})
                 if event.get("type") == "content_block_delta":
                     delta = event.get("delta", {})
-                    text = delta.get("text", "")
+                    text = delta.get("text", "") or delta.get("thinking", "")
                     if text:
                         callback(text)
             elif msg.get("type") == "result":

@@ -1,0 +1,101 @@
+- ResearchStep dataset
+- maybe we can try using QED-Nano? If this worked, that would be very cool.
+- integration with tools like blueprint or Corca
+
+ideas:
+- single compact whiteboard state (isn't it like recursive LLMs?)
+  - contains e.g. the current plan
+- repository of subresults, notes, results, observations, etc.
+  - each is a single file
+  - also brief, but containing everything that could be useful/interesting
+  - each has a single-sentence summary (given to agent input)
+- decomposition into just two levels (a la Kimi K2.5 or Cursor's web browser development): planner and worker
+  - other structure is emergent
+- workflow:
+  - planner thinks about the problem, creates tasks
+    - possible tasks: attempt proof of theorem (given a specific direction),
+    attempt proof of a variation of theorem, repair proof (given proof and
+    feedback), verify proof (give feedback; errors can be of two types: either
+    recoverable or fatal), literature search
+    - tasks are sorted
+    - usually, you first want to do literature search
+  - tasks are taken in batches of P (for now, we use no parallelization, ie P=1)
+  - worker reports back a report of progress
+    - can contain a proof, an observation, description of what failed, useful
+    identified or even proven lemma, literature review, etc. (whatever is
+    relevant as the worker's output - leaves space for automatic prompt optimization)
+- every proof (including proof of lemmas) is independently verified
+- we want to use formal verification (Lean) - but not for proof search
+  -> synthesis of formal methods (AlphaProof) and informal methods (Aletheia)
+
+
+----------
+
+Let's completely rethink the high-level approach of OpenProver.
+
+There should be two logical components: planner (single) and worker (possibly
+multiple - spawned by the planner for a specific task, alive only for that
+specific task). All other structure will be emergent.
+On the global, planner level, there is:
+- whiteboard - a compact state containing everything necessary, summarized briefly; current version written in WHITEBOARD.md
+- repository of other things that are useful and should not be written directly on the whiteboard
+  - each thing is e.g. lemma, observation, failed proof attempt description, compilation of literature on some topic, etc.
+  - each thing is a single .md file in the repo/ subfolder
+  - each thing should only contain the relevant / interesting text
+  - only relevant / interesting items should be stored! We have limited space.
+  - each thing also has a one-sentence summary at the top (just "Summary: ...\n\n")
+- Planner proceeds in steps
+  - step input: whiteboard + list of summaries of all things (with names) + (if not
+  at first step) output of the previous step + level of parallelism P (for now,
+  let's use P=1 in argparse)
+  - types of steps: proof_found, give_up, read_items, write_item, spawn
+  - proof_found and give_up are clear
+  - read_items retrieves a list of repository items (ie their contents) based on their names
+  - write_item writes (or updates) a repository item given name and content; if the content is equal to "null", the item will be deleted
+  - spawn says what tasks to run (ie delegate to spawned workers) (only the first P tasks will be executed,
+  other will be discarded -> the planner should output at most P tasks)
+    - it's OK to run only one parallel task, but you can also have more
+    - example of tasks:
+      - run literature search
+      - planner has identified 3 possible paths toward proof -> run them in
+      parallel (or if they don't fit into P, run only some of them and write
+      others on the whiteboard)
+      - there is a proof -> verify it (each proof, even that of lemmas, should be independently verified at least once)
+        - on error, the verification should either output what is wrong, or say that it's wrong beyond repair
+      - there is a proof and feedback from verifier which says that there are some things that could be corrected -> refine it
+        - after repairing, the proof should be verified again
+      - etc.
+    - task assignment format: whatever - just the task description, with everything the worker needs to know
+      - the worker will only see the description + repository items that are referenced from the description
+      - repository items can be referenced simply by their name (which is the
+      part before the .md in the filename) anytime in the text using
+      wikilink-style links, ie "[[item-slug]]"
+    - output of that step is the concatenation of outputs of all workers run in the step
+- Worker:
+  - input: task (assigned by the planner)
+  - output: whatever is the relevant result
+    - can also include other relevant / interesting observations, notes, lemmas (potentially with
+    proofs), etc. - it's solely the decision of the planner whether it will choose to write
+    them to the repository (only write truly relevant / useful / interesting stuff)
+  - worker does not decompose into more "steps" - it's only one step (reasoning + output)
+- use useful stuff that is already in the current codebase
+  - e.g. instruct the planner that when stuck, it's useful to prove a variation / simplification of the theorem
+
+The basic UI shape is nice, we can build on top of it. However, we need a way to
+switch between the different workers. Create a system of tabs - one for
+coordinator, others for workers. Allow simple switching between them. When going
+back in history in the coordinator tab, the worker tabs should show the workers
+that were employed in that step (even though now they are finished - that should
+be indicated). This allows inspection of the whole history.
+
+Feel free to push back in any way. We need to keep it simple.
+
+
+
+---------
+
+- don't use JSON - use e.g. TOML (simpler format)
+- planner schema:
+  - aren't the thinking and summary outputs redundant?
+  - the web_search field is weird. Instead, in offline/isolation mode, we simply ban the literature search action. No other action then literature search is allowed to use web search
+- to be clear, proof_found should only be called when the planner is sure that the final proof is correct; and this action terminates openprover

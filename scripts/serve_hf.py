@@ -69,6 +69,47 @@ class ThinkBudgetProcessor(LogitsProcessor):
         return scores
 
 
+class BatchThinkBudgetProcessor(LogitsProcessor):
+    """Batch-aware variant of ThinkBudgetProcessor."""
+
+    def __init__(self, end_think_ids: list[int], budget: int, prompt_len: int, batch_size: int):
+        self.end_ids = end_think_ids
+        self.budget = budget
+        self.prompt_len = prompt_len
+        self.in_thinking = [True] * batch_size
+        self.force_idx = [0] * batch_size
+
+    def __call__(self, input_ids: torch.LongTensor,
+                 scores: torch.FloatTensor) -> torch.FloatTensor:
+        n = len(self.end_ids)
+        generated = input_ids.shape[1] - self.prompt_len
+        forced_scores = None
+
+        for i in range(input_ids.shape[0]):
+            if not self.in_thinking[i]:
+                continue
+
+            # Check if </think> was naturally generated for this sequence.
+            if n > 0 and input_ids.shape[1] >= n:
+                last_n = input_ids[i, -n:].tolist()
+                if last_n == self.end_ids:
+                    self.in_thinking[i] = False
+                    continue
+
+            if generated >= self.budget:
+                if self.force_idx[i] < len(self.end_ids):
+                    target = self.end_ids[self.force_idx[i]]
+                    self.force_idx[i] += 1
+                    if forced_scores is None:
+                        forced_scores = scores.clone()
+                    forced_scores[i, :] = float("-inf")
+                    forced_scores[i, target] = 0
+                else:
+                    self.in_thinking[i] = False
+
+        return forced_scores if forced_scores is not None else scores
+
+
 class CancelBatchCriteria(StoppingCriteria):
     """Stop generation early when cancellation is requested."""
 
@@ -217,12 +258,17 @@ class Worker:
                 CancelBatchCriteria(cancel_event),
             ])
 
-        # Thinking budget enforcement (if specified, applies to all)
-        # Note: ThinkBudgetProcessor is per-sample, so we'd need batch-aware version
-        # For now, skip max_thinking_tokens in batched mode (batch-aware logits processor TODO).
+        # Thinking budget enforcement (applies to all items in this batch key).
         if first.max_thinking_tokens is not None:
-            # TODO: Implement batch-aware ThinkBudgetProcessor if needed
-            pass
+            prompt_len = inputs.input_ids.shape[1]
+            processor = BatchThinkBudgetProcessor(
+                self.end_think_ids,
+                first.max_thinking_tokens,
+                prompt_len,
+                batch_size,
+            )
+            existing = gen_kwargs.get("logits_processor", [])
+            gen_kwargs["logits_processor"] = [*existing, processor]
 
         # Generate batch
         with torch.inference_mode():
@@ -515,15 +561,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        messages = body.get("messages", [])
-        if "max_output_tokens" not in body:
-            self._json_response(400, {"error": "missing required field: max_output_tokens"})
+        parsed = self._parse_generation_params(body)
+        if parsed is None:
             return
-        max_output_tokens = body["max_output_tokens"]
-        temperature = body.get("temperature", 0.6)
-        top_p = body.get("top_p", 0.95)
-        stream = body.get("stream", False)
-        max_thinking_tokens = body.get("max_thinking_tokens")
+        messages, max_output_tokens, temperature, top_p, stream, max_thinking_tokens = parsed
 
         if not batching_enabled:
             self._handle_direct_request(
@@ -645,6 +686,45 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return False
 
+    def _parse_generation_params(self, body):
+        messages = body.get("messages")
+        if not isinstance(messages, list) or not messages:
+            self._json_response(400, {"error": "field 'messages' must be a non-empty list"})
+            return None
+
+        if "max_output_tokens" not in body:
+            self._json_response(400, {"error": "missing required field: max_output_tokens"})
+            return None
+        max_output_tokens = body["max_output_tokens"]
+        if not isinstance(max_output_tokens, int) or max_output_tokens <= 0:
+            self._json_response(400, {"error": "field 'max_output_tokens' must be a positive integer"})
+            return None
+
+        max_thinking_tokens = body.get("max_thinking_tokens")
+        if max_thinking_tokens is not None:
+            if not isinstance(max_thinking_tokens, int) or max_thinking_tokens < 0:
+                self._json_response(400, {"error": "field 'max_thinking_tokens' must be a non-negative integer or null"})
+                return None
+
+        temperature = body.get("temperature", 0.6)
+        if not isinstance(temperature, (int, float)) or temperature < 0:
+            self._json_response(400, {"error": "field 'temperature' must be a non-negative number"})
+            return None
+        temperature = float(temperature)
+
+        top_p = body.get("top_p", 0.95)
+        if not isinstance(top_p, (int, float)) or top_p <= 0 or top_p > 1:
+            self._json_response(400, {"error": "field 'top_p' must be in (0, 1]"})
+            return None
+        top_p = float(top_p)
+
+        stream = body.get("stream", False)
+        if not isinstance(stream, bool):
+            self._json_response(400, {"error": "field 'stream' must be a boolean"})
+            return None
+
+        return messages, max_output_tokens, temperature, top_p, stream, max_thinking_tokens
+
     def _handle_direct_request(self, messages, max_output_tokens, temperature, top_p, stream, max_thinking_tokens):
         worker = lb.get_worker(prefer_free=True)
         worker.busy = True
@@ -734,7 +814,8 @@ class Handler(BaseHTTPRequestHandler):
             cancel_event.set()
             raise
         finally:
-            gen_thread.join(timeout=10)
+            cancel_event.set()
+            gen_thread.join()
 
         completion_tokens = result.get("completion_tokens", 0)
         final = {

@@ -38,11 +38,23 @@ ideas:
 
 We now need to integrate Lean verification into the process. We need to add
 support for the case where the theorem to be proven is formalized in Lean.
+Also, let's add a mode where the goal is only to formalize a proof from natural language to Lean.
+
+
+----------
+
+We now need to integrate Lean verification into the process. We need to add
+support for the case where the theorem to be proven is formalized in Lean.
 Also, let's add a mode where the goal is only to formalize a theorem, not to prove it.
 
-First let's describe the autoformalization mode. The user will run something like `openprover formalize theorem.md`.
-You can also say `prove` instead of `formalize`, but `prove` is implicit if no action is given.
-The formalization mode is very similar to proof mode.
+First let's describe the autoformalization mode. The user will run something
+like `openprover formalize theorem.md`.  You can also say `prove` instead of
+`formalize`, but `prove` is implicit if no action is given.  I think the only
+change in formalize mode from proof mode is a bit different prompt for the
+planner (saying that the goal is to formalize, not to prove).  Also, in the
+formalize mode, the planner will be hardcoded to, as the first action, spawn one
+worker whose task is simply "Formalize this and that in Lean, output only the
+Lean code."
 
 
 Enforce that the input file is either .md or .lean. When .lean, our goal will be

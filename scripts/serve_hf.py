@@ -220,10 +220,11 @@ class PendingRequest:
 class BatchScheduler:
     """Dynamic batching scheduler with timeout and batch-size triggers."""
 
-    def __init__(self, workers: list[Worker], batch_size: int, batch_timeout_s: float):
+    def __init__(self, workers: list[Worker], batch_size: int, batch_timeout_s: float, verbose: bool = False):
         self.workers = workers
         self.batch_size = batch_size
         self.batch_timeout_s = batch_timeout_s
+        self.verbose = verbose
         self.pending_queue = []
         self.queue_lock = threading.Condition()
         self.running = True
@@ -316,6 +317,8 @@ class BatchScheduler:
 
                     # Dispatch to worker in background thread
                     worker.busy = True
+                    if self.verbose:
+                        print(f"[BATCH] Dispatching batch of size {len(batch_items)} to GPU {worker.gpu_id}")
                     threading.Thread(
                         target=self._process_batch,
                         args=(worker, batch_requests, batch_items),
@@ -325,6 +328,8 @@ class BatchScheduler:
     def _process_batch(self, worker: Worker, requests: list[PendingRequest],
                        batch_items: list[BatchItem]):
         """Process a batch on a worker and signal completion."""
+        batch_size = len(batch_items)
+        gpu_id = worker.gpu_id
         try:
             with worker.lock:
                 results = worker.generate_batch(batch_items)
@@ -332,11 +337,17 @@ class BatchScheduler:
             for req, result in zip(requests, results):
                 req.result = result
                 req.completion_event.set()
+            if self.verbose:
+                total_completion_tokens = sum(r["completion_tokens"] for r in results)
+                print(f"[BATCH] Completed batch of size {batch_size} on GPU {gpu_id} "
+                      f"({total_completion_tokens} completion tokens)")
         except Exception as e:
             # Propagate error to all requests in batch
             for req in requests:
                 req.error = e
                 req.completion_event.set()
+            if self.verbose:
+                print(f"[BATCH] ERROR: batch of size {batch_size} on GPU {gpu_id} failed: {e}")
         finally:
             worker.busy = False
             # Wake scheduler to check for more work
@@ -478,6 +489,8 @@ def main():
                         help="Batch size for dynamic batching (default: 32)")
     parser.add_argument("--batch-timeout", type=float, default=1.0,
                         help="Batch timeout in seconds (default: 1.0)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Print batch processing information")
     args = parser.parse_args()
 
     n_available = torch.cuda.device_count()
@@ -506,7 +519,7 @@ def main():
                 lambda i: Worker(i, args.model, dtype, tokenizer),
                 range(1, args.num_gpus),
             ))
-    scheduler = BatchScheduler(workers, args.batch_size, args.batch_timeout)
+    scheduler = BatchScheduler(workers, args.batch_size, args.batch_timeout, args.verbose)
 
     server = ThreadedHTTPServer((args.host, args.port), Handler)
     print(f"\nServing on http://{args.host}:{args.port}")
@@ -515,6 +528,8 @@ def main():
     print(f"  dtype: {args.dtype}")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Batch timeout: {args.batch_timeout}s")
+    if args.verbose:
+        print(f"  Verbose mode: enabled")
 
     try:
         server.serve_forever()

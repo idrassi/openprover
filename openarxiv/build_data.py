@@ -29,14 +29,24 @@ def _fix_toml_strings(text: str) -> str:
     return re.sub(r'"""\\\n(.*?)"""', replace_ml, text, flags=re.DOTALL)
 
 
-def parse_cost(cost_val) -> float:
-    """Parse a cost value (string like '$0.20' or float) to a float."""
-    if isinstance(cost_val, (int, float)):
-        return float(cost_val)
+def parse_cost(cost_val) -> float | None:
+    """Parse a cost value (string like '$0.20' or float) to a float.
+
+    Returns None if cost is unknown/unreported.
+    """
+    if cost_val is None:
+        return None
     if isinstance(cost_val, str):
+        if cost_val in ("n/a", "unknown", ""):
+            return None
         m = re.match(r"\$?([\d.]+)", cost_val)
-        return float(m.group(1)) if m else 0.0
-    return 0.0
+        if not m:
+            return None
+        val = float(m.group(1))
+        return val if val > 0 else None
+    if isinstance(cost_val, (int, float)):
+        return float(cost_val) if cost_val > 0 else None
+    return None
 
 
 def load_paper(paper_dir: Path) -> dict | None:
@@ -68,7 +78,7 @@ def load_paper(paper_dir: Path) -> dict | None:
                 cost_float = parse_cost(cost_raw)
                 extraction = {
                     "model": ext.get("model", ""),
-                    "cost": f"${cost_float:.2f}" if cost_float >= 0.01 else f"${cost_float:.4f}",
+                    "cost": (f"${cost_float:.2f}" if cost_float >= 0.01 else f"${cost_float:.4f}") if cost_float is not None else None,
                     "num_problems": ext.get("num_problems", 0),
                     "prompt_tokens": ext.get("prompt_tokens", 0),
                     "completion_tokens": ext.get("completion_tokens", 0),
@@ -131,9 +141,9 @@ def build_data(data_dir: Path, output: Path):
         ext = p.get("extraction")
         if ext and "error" not in ext:
             extracted_papers += 1
-            cost_str = ext.get("cost", "")
-            if cost_str:
-                total_cost += parse_cost(cost_str)
+            cost_val = parse_cost(ext.get("cost", ""))
+            if cost_val is not None:
+                total_cost += cost_val
         if p["problems"]:
             papers_with_problems += 1
             total_problems += len(p["problems"])

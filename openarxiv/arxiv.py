@@ -486,8 +486,8 @@ def _toml_str(s: str) -> str:
 
 def _fmt_cost(cost) -> str:
     """Format a cost value as USD string."""
-    if cost is None:
-        return "unknown"
+    if cost is None or cost == 0:
+        return "n/a"
     cost = float(cost)
     if cost < 0.01:
         return f"${cost:.4f}"
@@ -613,7 +613,11 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False,
     print(f"  {prob_color}{n_prob} problem(s){_C.RESET}  "
           f"{result['usage']['total_tokens']:,} tokens  {cost_str}")
 
+    # Clean old problem files before writing new results
     problems_dir = paper_dir / "problems"
+    if problems_dir.exists():
+        for old in problems_dir.iterdir():
+            old.unlink()
     problems_dir.mkdir(exist_ok=True)
 
     if problems:

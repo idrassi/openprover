@@ -1,5 +1,9 @@
 import { createContext, useContext, useState, useEffect, useMemo } from 'react'
 
+const REMOTE_URL = 'https://ipwzcwxgemjervyvptjb.supabase.co/storage/v1/object/public/openarxiv/data.json'
+const LOCAL_URL = '/data.json'
+const DATA_URL = import.meta.env.VITE_DATA_SOURCE === 'remote' ? REMOTE_URL : LOCAL_URL
+
 const DataContext = createContext(null)
 
 export function DataProvider({ children }) {
@@ -9,7 +13,7 @@ export function DataProvider({ children }) {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    fetch('/data.json')
+    fetch(DATA_URL)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()

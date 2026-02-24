@@ -6,10 +6,8 @@ import gzip
 import io
 import os
 import re
-import shutil
 import subprocess
 import tarfile
-import tempfile
 import tomllib
 import urllib.parse
 import urllib.request
@@ -44,36 +42,6 @@ DEFAULT_DATA_DIR = Path(__file__).parent / "data"
 # Only include these file types in the LLM prompt.
 SOURCE_EXTENSIONS = {".tex", ".bib", ".sty", ".bst"}
 
-# LaTeX template for validating extracted problem snippets.
-# The snippets (context + statement) are inserted at the %% SNIPPET %% marker.
-# Packages chosen for broad math coverage AND MathJax compatibility.
-TEMPLATE_TEX = r"""\documentclass{article}
-\usepackage[utf8]{inputenc}
-\usepackage{amsmath,amssymb,amsthm}
-\usepackage{mathtools}
-\usepackage{hyperref}
-\usepackage{braket}
-
-\newtheorem{theorem}{Theorem}
-\newtheorem{lemma}[theorem]{Lemma}
-\newtheorem{proposition}[theorem]{Proposition}
-\newtheorem{corollary}[theorem]{Corollary}
-\newtheorem{conjecture}[theorem]{Conjecture}
-\newtheorem{definition}[theorem]{Definition}
-\newtheorem{remark}[theorem]{Remark}
-\newtheorem{example}[theorem]{Example}
-\newtheorem{question}[theorem]{Question}
-\newtheorem{problem}[theorem]{Problem}
-\theoremstyle{definition}
-\newtheorem{openproblem}[theorem]{Open Problem}
-
-\begin{document}
-
-%% SNIPPET %%
-
-\end{document}
-"""
-
 EXTRACT_SYSTEM_PROMPT = """\
 You are a research mathematician.
 Your task is to carefully read the full source of a combinatorics paper and extract all open problems that are introduced (posed/conjectured) but NOT solved.
@@ -86,23 +54,16 @@ Rules:
 - For each problem, produce a TOML block with the fields described below.
 - The "summary" is a very compact 1-2 sentence TLDR.
 - The "location" describes where in the paper the open problem appears, e.g. "Section 3, Conjecture 4.2" or "Introduction, last paragraph".
-- The "statement" is the full LaTeX statement from the paper.  It must be a LaTeX snippet (not a full document). It must not contain any \\section or \\subsection commands. It should be self-contained math content that can be inserted into a document body.
-- The "context" contains all relevant background from this paper needed to understand the statement. Only include context explicitly mentioned in this paper! It is also a LaTeX snippet. It may use \\subsection{...} to organize long context, but must not use \\section{...}. It should include definitions of key terms, notation, and any prerequisite results referenced in the statement.
-- Both statement and context may reference \\cite{...}, \\citet{...}, or \\citep{...} - but only include truly relevant references.
-- Every reference and every \\includegraphics image mentioned in statement or context must appear in the references/images lists. Conversely, every entry in references/images must actually be cited or included in the statement or context LaTeX.
-- Clean up LaTeX: expand or define any custom macros. The snippets must compile standalone with standard packages (amsmath, amssymb, amsthm, mathtools, hyperref, braket).
-- For MathJax web compatibility: avoid obscure packages. Stick to standard math commands. Prefer \\operatorname{name} over custom \\DeclareMathOperator. Avoid \\tikz, \\pstricks, or other drawing commands. Use \\text{...} for text in math mode.
+- The "statement" is the problem statement, written in **markdown with inline LaTeX**. Use `$...$` for inline math and `$$...$$` for display math. Use markdown formatting (**bold**, *italic*, `>` blockquotes, `###` headings, `-` lists) for text structure. Do NOT use LaTeX text-mode commands like \\textbf, \\emph, \\section, \\begin{conjecture}, etc. Instead, write e.g. **Conjecture.** in markdown bold.
+- The "context" contains all relevant background from this paper needed to understand the statement. Only include context explicitly mentioned in this paper! Same format rules: markdown with inline LaTeX. Use `###` subheadings to organize long context. Include definitions of key terms, notation, and any prerequisite results referenced in the statement.
+- For references, write them as plain text with markdown formatting. E.g. "[AuthorYear]" as a plain citation marker, not \\cite{...}.
+- Every reference mentioned in statement or context must appear in the references list. Conversely, every entry in references must actually be cited in the statement or context.
+- For MathJax compatibility: stick to standard math commands. Use \\operatorname{name} for custom operators. Avoid \\tikz, \\pstricks, or drawing commands. Use \\text{...} for text inside math mode.
 - It is perfectly fine for a paper to have zero open problems. In that case, output an empty problems list.
 
-The LaTeX snippets will be inserted into this template for validation:
-
-```latex
-""" + TEMPLATE_TEX + """\
-```
-
 Output format - a single TOML document.
-IMPORTANT: For all fields that contain LaTeX (statement, context, text), you MUST use TOML literal strings (triple single quotes '''...''') so that backslashes are preserved verbatim.
-Do NOT use basic strings (double quotes) for LaTeX content, as TOML interprets backslashes as escape sequences.
+IMPORTANT: For all fields that contain math (statement, context, text), you MUST use TOML literal strings (triple single quotes '''...''') so that backslashes are preserved verbatim.
+Do NOT use basic strings (double quotes) for content with backslashes, as TOML interprets backslashes as escape sequences.
 
 ```toml
 [[problems]]
@@ -110,18 +71,23 @@ name = "Human-readable name of the problem"
 summary = "Very brief 1-2 sentence description."
 location = "Section 3, Conjecture 4.2"
 statement = '''
-\\begin{conjecture}
-For every graph $G$ with $\\chi(G) \\le 4$, we have...
-\\end{conjecture}
+**Conjecture.** For every graph $G$ with $\\chi(G) \\le 4$, we have $f(G) \\le 100$.
 '''
 context = '''
-Let $G = (V, E)$ be a simple undirected graph. The \\emph{chromatic
-number} $\\chi(G)$ is the minimum number of colors needed...
+Let $G = (V, E)$ be a simple undirected graph. The *chromatic number* $\\chi(G)$ is the minimum number of colors needed to color the vertices such that no two adjacent vertices share the same color.
+
+### Key definitions
+
+A graph is called *perfect* if for every induced subgraph $H$, we have $\\chi(H) = \\omega(H)$ where $\\omega(H)$ is the clique number.
+
+The function $f(G)$ was introduced by [SmithJones2020] and is defined as:
+
+$$f(G) = \\max_{S \\subseteq V} \\frac{|S|}{\\alpha(G[S])}$$
 '''
 
 [[problems.references]]
-tag = "AuthorYear"
-text = '''Full reference string as it appears in the bibliography'''
+tag = "SmithJones2020"
+text = '''J. Smith, A. Jones, *On chromatic bounds for perfect graphs*, J. Combin. Theory Ser. B, 2020.'''
 
 [[problems.images]]
 name = "figurefile.png"
@@ -508,72 +474,6 @@ def _toml_str(s: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# LaTeX validation
-# ---------------------------------------------------------------------------
-
-def validate_latex(problem: dict, output_pdf: Path) -> bool:
-    """Compile the problem's context + statement into a PDF using the template.
-
-    Returns True if compilation succeeded (output_pdf created).
-    On failure, writes the error log to output_pdf.with_suffix('.pdf.error').
-    """
-    statement = problem.get("statement", "").strip()
-    context = problem.get("context", "").strip()
-
-    snippet_parts = []
-    if context:
-        snippet_parts.append("\\section*{Context}\\setcounter{subsection}{0}")
-        snippet_parts.append(context)
-    if statement:
-        snippet_parts.append("\\section*{Statement}\\setcounter{subsection}{0}")
-        snippet_parts.append(statement)
-    refs = problem.get("references", [])
-    if refs:
-        snippet_parts.append("\\begin{thebibliography}{99}")
-        for ref in refs:
-            tag = ref.get("tag", "?")
-            text = ref.get("text", "")
-            snippet_parts.append(f"\\bibitem{{{tag}}} {text}")
-        snippet_parts.append("\\end{thebibliography}")
-    snippet = "\n\n".join(snippet_parts)
-
-    tex_content = TEMPLATE_TEX.replace("%% SNIPPET %%", snippet)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tex_path = Path(tmpdir) / "theorem.tex"
-        tex_path.write_text(tex_content)
-
-        result = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error",
-             "theorem.tex"],
-            cwd=tmpdir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        pdf_path = Path(tmpdir) / "theorem.pdf"
-        if result.returncode == 0 and pdf_path.exists():
-            shutil.copy2(pdf_path, output_pdf)
-            # Remove stale error file if it exists
-            error_path = output_pdf.parent / (output_pdf.name + ".error")
-            error_path.unlink(missing_ok=True)
-            return True
-        else:
-            error_path = output_pdf.parent / (output_pdf.name + ".error")
-            log_path = Path(tmpdir) / "theorem.log"
-            error_content = ""
-            if log_path.exists():
-                error_content = log_path.read_text(errors="replace")
-            else:
-                error_content = result.stdout + "\n" + result.stderr
-            error_path.write_text(error_content)
-            # Remove stale PDF if it exists
-            output_pdf.unlink(missing_ok=True)
-            return False
-
-
-# ---------------------------------------------------------------------------
 # Extract commands
 # ---------------------------------------------------------------------------
 
@@ -615,11 +515,8 @@ def _save_llm_call(call_dir: Path, result: dict, prompt: str | None = None):
         (call_dir / "reasoning.txt").write_text(result["reasoning"])
 
 
-def _validate_problems(problems: list[dict], problems_dir: Path
-                       ) -> tuple[list[dict], list[dict]]:
-    """Validate LaTeX for each problem. Returns (ok_problems, failed_problems).
-    Each failed problem gets an 'error' key with the error text."""
-    ok, failed = [], []
+def _save_problems(problems: list[dict], problems_dir: Path):
+    """Assign slugs and write TOML files for each problem."""
     used_slugs: set[str] = set()
     for prob in problems:
         slug = _make_slug(prob.get("name", "problem"), used_slugs)
@@ -627,29 +524,10 @@ def _validate_problems(problems: list[dict], problems_dir: Path
         prob["id"] = slug
         toml_path = problems_dir / f"{slug}.toml"
         write_problem_toml(prob, toml_path)
-
-        pdf_path = problems_dir / f"{slug}.pdf"
-        try:
-            if validate_latex(prob, pdf_path):
-                print(f"  {_C.GREEN}OK{_C.RESET}   {slug}")
-                ok.append(prob)
-            else:
-                error_path = problems_dir / f"{slug}.pdf.error"
-                err = error_path.read_text() if error_path.exists() else ""
-                prob["_error"] = err
-                failed.append(prob)
-                print(f"  {_C.RED}ERR{_C.RESET}  {slug}")
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            error_path = problems_dir / f"{slug}.pdf.error"
-            error_path.write_text(f"LaTeX compilation failed: {e}\n")
-            prob["_error"] = str(e)
-            failed.append(prob)
-            print(f"  {_C.RED}ERR{_C.RESET}  {slug}")
-    return ok, failed
+        print(f"  {_C.GREEN}OK{_C.RESET}   {slug}")
 
 
-def extract_paper(paper_dir: Path, model: str, force: bool = False,
-                  max_retries: int = 2):
+def extract_paper(paper_dir: Path, model: str, force: bool = False):
     """Extract open problems from a single paper directory."""
     # Read paper title for display
     paper_toml = paper_dir / "paper.toml"
@@ -692,92 +570,29 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False,
         _write_extract_toml(paper_dir, error=msg)
         raise RuntimeError(msg)
 
-    # Initial LLM call
+    # LLM call
     messages = [
         {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
-    call_num = 0
     result = call_llm(messages, model)
-    _save_llm_call(llm_calls_dir / f"{call_num:03d}", result, prompt)
-    total_usage = dict(result["usage"])
+    _save_llm_call(llm_calls_dir / "000", result, prompt)
 
     problems = parse_toml_response(result["content"])
-    initial_problems = problems  # keep for fallback
 
     n_prob = len(problems)
-    cost_str = _fmt_cost(total_usage.get("cost"))
+    cost_str = _fmt_cost(result["usage"].get("cost"))
     prob_color = _C.GREEN if n_prob > 0 else _C.DIM
     print(f"  {prob_color}{n_prob} problem(s){_C.RESET}  "
-          f"{total_usage['total_tokens']:,} tokens  {cost_str}")
+          f"{result['usage']['total_tokens']:,} tokens  {cost_str}")
 
     problems_dir = paper_dir / "problems"
     problems_dir.mkdir(exist_ok=True)
 
     if problems:
-        _, failed = _validate_problems(problems, problems_dir)
+        _save_problems(problems, problems_dir)
 
-        # Retry loop: ask LLM to fix LaTeX errors
-        messages.append({"role": "assistant", "content": result["content"]})
-        retry = 0
-        while failed and retry < max_retries:
-            retry += 1
-            call_num += 1
-            error_summary = "\n\n".join(
-                f"Problem \"{p.get('name', '?')}\":\n{p['_error'][:2000]}"
-                for p in failed
-            )
-            fix_msg = (
-                f"The following {len(failed)} problem(s) had LaTeX "
-                f"compilation errors:\n\n{error_summary}\n\n"
-                f"Please output a corrected COMPLETE TOML (all problems, "
-                f"not just the broken ones) inside a ```toml code fence."
-            )
-            messages.append({"role": "user", "content": fix_msg})
-            print(f"  {_C.YELLOW}retry {retry}/{max_retries}{_C.RESET}  "
-                  f"fixing {len(failed)} LaTeX error(s)...")
-            result = call_llm(messages, model)
-            _save_llm_call(llm_calls_dir / f"{call_num:03d}", result, fix_msg)
-            messages.append({"role": "assistant", "content": result["content"]})
-
-            # Accumulate usage
-            ru = result["usage"]
-            total_usage["prompt_tokens"] += ru["prompt_tokens"]
-            total_usage["completion_tokens"] += ru["completion_tokens"]
-            total_usage["total_tokens"] += ru["total_tokens"]
-            if ru.get("cost") is not None:
-                prev = total_usage.get("cost")
-                total_usage["cost"] = (prev or 0) + float(ru["cost"])
-
-            new_problems = parse_toml_response(result["content"])
-            if not new_problems:
-                print(f"    {_C.RED}no problems parsed, stopping{_C.RESET}")
-                break
-
-            # Clean problems dir and re-validate
-            for f in problems_dir.iterdir():
-                f.unlink()
-            _, failed = _validate_problems(new_problems, problems_dir)
-            if not failed:
-                problems = new_problems
-                print(f"    {_C.GREEN}all fixed{_C.RESET}")
-            else:
-                problems = new_problems
-
-        # If retries didn't fix all errors, restore initial output
-        if failed and problems is not initial_problems:
-            print(f"  {_C.YELLOW}reverting to initial extraction{_C.RESET}")
-            for f in problems_dir.iterdir():
-                f.unlink()
-            _validate_problems(initial_problems, problems_dir)
-
-        # Print totals if retries happened
-        if call_num > 0:
-            cost_str = _fmt_cost(total_usage.get("cost"))
-            print(f"  {_C.DIM}total: {total_usage['total_tokens']:,} "
-                  f"tokens  {cost_str}{_C.RESET}")
-
-    _write_extract_toml(paper_dir, usage=total_usage,
+    _write_extract_toml(paper_dir, usage=result["usage"],
                         num_problems=len(problems))
 
     if not problems:
@@ -794,8 +609,7 @@ def cmd_extract(args):
     if not paper_dir.exists():
         print(f"Error: paper directory not found: {paper_dir}")
         return 1
-    extract_paper(paper_dir, args.model, force=args.force,
-                  max_retries=args.retries)
+    extract_paper(paper_dir, args.model, force=args.force)
 
 
 def cmd_extract_all(args):
@@ -816,8 +630,7 @@ def cmd_extract_all(args):
 
     for paper_dir in paper_dirs:
         try:
-            extract_paper(paper_dir, args.model, force=args.force,
-                          max_retries=args.retries)
+            extract_paper(paper_dir, args.model, force=args.force)
         except Exception as e:
             print(f"  {_C.RED}ERROR: {e}{_C.RESET}")
 
@@ -857,11 +670,6 @@ def main():
         "--force", action="store_true",
         help="Overwrite existing extraction results",
     )
-    ex.add_argument(
-        "--retries", type=int, default=2,
-        help="Max LLM retries to fix LaTeX errors (default: 2)",
-    )
-
     # extract-all
     ea = sub.add_parser(
         "extract-all",
@@ -879,11 +687,6 @@ def main():
         "--max", type=int, default=None,
         help="Max papers to extract (default: all)",
     )
-    ea.add_argument(
-        "--retries", type=int, default=2,
-        help="Max LLM retries to fix LaTeX errors (default: 2)",
-    )
-
     args = parser.parse_args()
 
     if args.action == "download":

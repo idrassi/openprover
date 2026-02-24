@@ -392,8 +392,17 @@ def call_llm(messages: list[dict], model: str) -> dict:
     return {"content": content, "reasoning": reasoning, "usage": usage}
 
 
+class TOMLParseError(Exception):
+    """Raised when the LLM response contains TOML that fails to parse."""
+    pass
+
+
 def parse_toml_response(text: str) -> list[dict]:
-    """Extract TOML from LLM response and parse the problems list."""
+    """Extract TOML from LLM response and parse the problems list.
+
+    Returns a list of problem dicts (possibly empty if no problems found).
+    Raises TOMLParseError if TOML is present but malformed.
+    """
     # Find ```toml ... ``` block
     m = re.search(r"```toml\s*\n(.*?)```", text, re.DOTALL)
     if not m:
@@ -406,9 +415,7 @@ def parse_toml_response(text: str) -> list[dict]:
     try:
         data = tomllib.loads(toml_text)
     except tomllib.TOMLDecodeError as e:
-        print(f"    WARNING: TOML parse error: {e}")
-        print(f"    Raw TOML:\n{toml_text[:500]}")
-        return []
+        raise TOMLParseError(f"{e}\n    Raw TOML:\n{toml_text[:500]}")
 
     return data.get("problems", [])
 
@@ -527,7 +534,8 @@ def _save_problems(problems: list[dict], problems_dir: Path):
         print(f"  {_C.GREEN}OK{_C.RESET}   {slug}")
 
 
-def extract_paper(paper_dir: Path, model: str, force: bool = False):
+def extract_paper(paper_dir: Path, model: str, force: bool = False,
+                   retries: int = 2):
     """Extract open problems from a single paper directory."""
     # Read paper title for display
     paper_toml = paper_dir / "paper.toml"
@@ -570,15 +578,34 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False):
         _write_extract_toml(paper_dir, error=msg)
         raise RuntimeError(msg)
 
-    # LLM call
     messages = [
         {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
-    result = call_llm(messages, model)
-    _save_llm_call(llm_calls_dir / "000", result, prompt)
 
-    problems = parse_toml_response(result["content"])
+    max_attempts = 1 + retries
+    last_error = None
+
+    for attempt in range(max_attempts):
+        call_dir = llm_calls_dir / f"{attempt:03d}"
+        result = call_llm(messages, model)
+        _save_llm_call(call_dir, result, prompt if attempt == 0 else None)
+
+        try:
+            problems = parse_toml_response(result["content"])
+            last_error = None
+            break
+        except TOMLParseError as e:
+            last_error = str(e)
+            remaining = max_attempts - attempt - 1
+            if remaining > 0:
+                print(f"    {_C.YELLOW}TOML parse error (retrying, "
+                      f"{remaining} attempt{'s' if remaining != 1 else ''} "
+                      f"left): {e.args[0].splitlines()[0]}{_C.RESET}")
+            else:
+                print(f"    {_C.RED}TOML parse error (no retries left): "
+                      f"{e}{_C.RESET}")
+                problems = []
 
     n_prob = len(problems)
     cost_str = _fmt_cost(result["usage"].get("cost"))
@@ -593,9 +620,10 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False):
         _save_problems(problems, problems_dir)
 
     _write_extract_toml(paper_dir, usage=result["usage"],
-                        num_problems=len(problems))
+                        num_problems=len(problems),
+                        error=f"TOML parse failed after {max_attempts} attempt(s): {last_error}" if last_error else None)
 
-    if not problems:
+    if not problems and not last_error:
         (problems_dir / "none.txt").write_text(
             "No open problems found in this paper.\n"
         )
@@ -609,7 +637,8 @@ def cmd_extract(args):
     if not paper_dir.exists():
         print(f"Error: paper directory not found: {paper_dir}")
         return 1
-    extract_paper(paper_dir, args.model, force=args.force)
+    extract_paper(paper_dir, args.model, force=args.force,
+                  retries=args.retries)
 
 
 def cmd_extract_all(args):
@@ -630,7 +659,8 @@ def cmd_extract_all(args):
 
     for paper_dir in paper_dirs:
         try:
-            extract_paper(paper_dir, args.model, force=args.force)
+            extract_paper(paper_dir, args.model, force=args.force,
+                          retries=args.retries)
         except Exception as e:
             print(f"  {_C.RED}ERROR: {e}{_C.RESET}")
 
@@ -670,6 +700,10 @@ def main():
         "--force", action="store_true",
         help="Overwrite existing extraction results",
     )
+    ex.add_argument(
+        "--retries", type=int, default=2,
+        help="Max retries on TOML parse failure (default: 2)",
+    )
     # extract-all
     ea = sub.add_parser(
         "extract-all",
@@ -682,6 +716,10 @@ def main():
     ea.add_argument(
         "--force", action="store_true",
         help="Overwrite existing extraction results",
+    )
+    ea.add_argument(
+        "--retries", type=int, default=2,
+        help="Max retries on TOML parse failure (default: 2)",
     )
     ea.add_argument(
         "--max", type=int, default=None,

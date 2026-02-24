@@ -9,6 +9,37 @@
   font-weight: 500;
 }
 
+.paper-list-search {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  margin-bottom: var(--space-md);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.paper-list-search::placeholder {
+  color: var(--color-text-muted);
+}
+
+.paper-list-search:focus {
+  border-color: var(--color-accent);
+}
+
+.search-highlight {
+  background: #fef08a;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .paper-list-toolbar {
   display: flex;
   align-items: center;

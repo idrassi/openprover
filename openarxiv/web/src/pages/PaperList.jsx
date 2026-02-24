@@ -1,7 +1,6 @@
-import { useMemo, useTransition } from 'react'
+import { useState, useMemo, useDeferredValue, useTransition } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useData } from '../hooks/useData'
-import ProblemSummary from '../components/ProblemSummary'
 import CostBadge from '../components/CostBadge'
 import './PaperList.css'
 
@@ -11,7 +10,17 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-function PaperCard({ paper }) {
+function Highlight({ text, query }) {
+  if (!query) return text
+  const re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+  const parts = text.split(re)
+  if (parts.length === 1) return text
+  return parts.map((part, i) =>
+    re.test(part) ? <mark key={i} className="search-highlight">{part}</mark> : part
+  )
+}
+
+function PaperCard({ paper, query }) {
   const hasProblems = paper.problems.length > 0
   const extracted = paper.extraction && !paper.extraction.error
 
@@ -19,7 +28,7 @@ function PaperCard({ paper }) {
     <article className="paper-card">
       <div className="paper-card-header">
         <h3 className="paper-card-title">
-          <Link to={`/paper/${paper.id}`}>{paper.title}</Link>
+          <Link to={`/paper/${paper.id}`}><Highlight text={paper.title} query={query} /></Link>
         </h3>
         {extracted && paper.extraction.cost && (
           <CostBadge cost={paper.extraction.cost} />
@@ -39,7 +48,14 @@ function PaperCard({ paper }) {
       {hasProblems ? (
         <ul className="paper-card-problems">
           {paper.problems.map(prob => (
-            <ProblemSummary key={prob.id} problem={prob} paperId={paper.id} />
+            <li key={prob.id} className="problem-summary">
+              <Link to={`/paper/${paper.id}/problem/${prob.id}`} className="problem-summary-name">
+                <Highlight text={prob.name} query={query} />
+              </Link>
+              {prob.summary && (
+                <span className="problem-summary-tldr"> &mdash; {prob.summary}</span>
+              )}
+            </li>
           ))}
         </ul>
       ) : extracted ? (
@@ -58,10 +74,24 @@ export default function PaperList() {
   const [searchParams, setSearchParams] = useSearchParams()
   const filterProblems = searchParams.get('filter') === 'problems'
 
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
+  const isSearchStale = query !== deferredQuery
+
   const filtered = useMemo(() => {
-    if (!filterProblems) return papers
-    return papers.filter(p => p.problems.length > 0)
-  }, [papers, filterProblems])
+    let result = papers
+    if (filterProblems) {
+      result = result.filter(p => p.problems.length > 0)
+    }
+    if (deferredQuery) {
+      const q = deferredQuery.toLowerCase()
+      result = result.filter(p =>
+        p.title.toLowerCase().includes(q) ||
+        p.problems.some(prob => prob.name.toLowerCase().includes(q))
+      )
+    }
+    return result
+  }, [papers, filterProblems, deferredQuery])
 
   const [isPending, startTransition] = useTransition()
 
@@ -76,11 +106,21 @@ export default function PaperList() {
     })
   }
 
+  const loading = isPending || isSearchStale
+
   return (
     <div className="paper-list">
       <div className="paper-list-stats">
         {stats.total_papers} papers &middot; {stats.papers_with_problems} with problems &middot; {stats.total_problems} problems &middot; <span className="paper-list-cost">{stats.total_cost} total</span>
       </div>
+
+      <input
+        className="paper-list-search"
+        type="text"
+        placeholder="Search papers and problems..."
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+      />
 
       <div className="paper-list-toolbar">
         <div className="paper-list-count">
@@ -96,9 +136,9 @@ export default function PaperList() {
         </button>
       </div>
 
-      <div className={`paper-list-cards${isPending ? ' paper-list-cards--loading' : ''}`}>
+      <div className={`paper-list-cards${loading ? ' paper-list-cards--loading' : ''}`}>
         {filtered.map(paper => (
-          <PaperCard key={paper.id} paper={paper} />
+          <PaperCard key={paper.id} paper={paper} query={deferredQuery} />
         ))}
       </div>
     </div>

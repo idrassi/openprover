@@ -95,11 +95,12 @@
   flex-shrink: 0;
 }
 
-.problem-detail-ref-text {
-  display: inline;
+.problem-detail-ref-text.math-markdown {
+  min-width: 0;
+  line-height: 1.5;
 }
 
-.problem-detail-ref-text p {
+.problem-detail-ref-text.math-markdown p {
   display: inline;
   margin: 0;
 }

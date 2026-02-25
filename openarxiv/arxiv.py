@@ -54,7 +54,15 @@ Rules:
 - For each problem, produce a TOML block with the fields described below.
 - The "summary" is a very compact 1-2 sentence TLDR.
 - The "location" describes where in the paper the open problem appears, e.g. "Section 3, Conjecture 4.2" or "Introduction, last paragraph".
-- The "statement" is the problem statement, written in **markdown with inline LaTeX**. Use `$...$` for inline math and `$$...$$` for display math. Use markdown formatting (**bold**, *italic*, `>` blockquotes, `###` headings, `-` lists) for text structure. Do NOT use LaTeX text-mode commands like \\textbf, \\emph, \\section, \\begin{conjecture}, etc. Instead, write e.g. **Conjecture.** in markdown bold.
+- The "statement" is the problem statement, written in **markdown with inline LaTeX**. Use `$...$` for inline math and `$$...$$` for display math. Use markdown formatting (**bold**, *italic*, `>` blockquotes, `###` headings, `-` lists) for text structure. Do NOT use LaTeX text-mode commands like \\textbf, \\emph, \\section, etc. Instead, write e.g. **Conjecture.** in markdown bold.
+- CRITICAL: Do NOT use \\begin{...} or \\end{...} environments anywhere in statement or context. These do not render in MathJax. Specifically:
+  - Instead of \\begin{conjecture}...\\end{conjecture}, write **Conjecture.** in markdown bold.
+  - Instead of \\begin{theorem}...\\end{theorem}, write **Theorem.** in markdown bold. Same for lemma, proposition, question, problem, etc.
+  - Instead of \\begin{enumerate}/\\begin{itemize}, use markdown lists (`1.`, `-`).
+  - Instead of \\begin{cases}...\\end{cases}, use the LaTeX cases environment ONLY inside `$$...$$` math mode (i.e., `$$f(x) = \\begin{cases} ... \\end{cases}$$` is OK because MathJax renders it as math).
+  - Instead of \\begin{align}...\\end{align} or \\begin{equation}, use `$$...$$` display math. For multi-line equations use `$$` with `\\\\` line breaks.
+  - Instead of \\begin{bmatrix}/\\begin{pmatrix}, use the matrix command ONLY inside `$...$` or `$$...$$` math mode (these are OK since MathJax renders them as math).
+  The rule is: \\begin/\\end may ONLY appear inside `$...$` or `$$...$$` delimiters for math-mode environments (cases, bmatrix, pmatrix, array, aligned). They must NEVER appear as top-level text-mode structural commands.
 - The "context" contains all relevant background from this paper needed to understand the statement. Only include context explicitly mentioned in this paper! Same format rules: markdown with inline LaTeX. Use `###` subheadings to organize long context. Include definitions of key terms, notation, and any prerequisite results referenced in the statement.
 - For references, write them as plain text with markdown formatting. E.g. "[AuthorYear]" as a plain citation marker, not \\cite{...}.
 - Every reference mentioned in statement or context must appear in the references list. Conversely, every entry in references must actually be cited in the statement or context.

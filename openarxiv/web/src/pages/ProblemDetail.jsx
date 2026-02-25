@@ -28,6 +28,12 @@ export default function ProblemDetail() {
     if (problem.context) {
       parts.push(`\n\n### Context\n\n${problem.context}`)
     }
+    if (problem.references && problem.references.length > 0) {
+      parts.push(`\n\n### References\n`)
+      problem.references.forEach(ref => {
+        parts.push(`[${ref.tag}] ${ref.text}`)
+      })
+    }
     const blob = new Blob([parts.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

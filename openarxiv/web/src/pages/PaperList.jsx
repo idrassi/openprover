@@ -87,6 +87,7 @@ export default function PaperList() {
       const q = deferredQuery.toLowerCase()
       result = result.filter(p =>
         p.title.toLowerCase().includes(q) ||
+        p.authors.some(a => a.toLowerCase().includes(q)) ||
         p.problems.some(prob => prob.name.toLowerCase().includes(q))
       )
     }

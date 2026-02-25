@@ -72,14 +72,13 @@ Rules:
 - It is perfectly fine for a paper to have zero open problems. In that case, output an empty problems list.
 
 Output format - a single TOML document.
-IMPORTANT: For all fields that contain math (statement, context, text), you MUST use TOML literal strings (triple single quotes '''...''') so that backslashes are preserved verbatim.
-Do NOT use basic strings (double quotes) for content with backslashes, as TOML interprets backslashes as escape sequences.
+CRITICAL TOML RULE: You MUST use TOML literal strings (triple single quotes '''...''') for ALL string values. NEVER use double-quoted strings ("..." or \"""...\"""). TOML double-quoted strings interpret backslashes as escape sequences, which corrupts LaTeX. Use '''...''' for everything - name, summary, location, statement, context, tag, text.
 
 ```toml
 [[problems]]
-name = "Human-readable name of the problem"
-summary = "Very brief 1-2 sentence description."
-location = "Section 3, Conjecture 4.2"
+name = '''Human-readable name of the problem'''
+summary = '''Very brief 1-2 sentence description with $\\chi(G) \\le 4$.'''
+location = '''Section 3, Conjecture 4.2'''
 statement = '''
 **Conjecture.** For every graph $G$ with $\\chi(G) \\le 4$, we have $f(G) \\le 100$.
 '''
@@ -96,11 +95,11 @@ $$f(G) = \\max_{S \\subseteq V} \\frac{|S|}{\\alpha(G[S])}$$
 '''
 
 [[problems.references]]
-tag = "SmithJones2020"
+tag = '''SmithJones2020'''
 text = '''J. Smith, A. Jones, *On chromatic bounds for perfect graphs*, J. Combin. Theory Ser. B, 2020.'''
 
 [[problems.images]]
-name = "figurefile.png"
+name = '''figurefile.png'''
 ```
 
 If there are no open problems, output:
@@ -750,6 +749,19 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False,
                 print(f"    {_C.YELLOW}TOML parse error (retrying, "
                       f"{remaining} attempt{'s' if remaining != 1 else ''} "
                       f"left): {e.args[0].splitlines()[0]}{_C.RESET}")
+                # Feed the error back so the LLM can correct its output.
+                messages.append({"role": "assistant", "content": result["content"]})
+                messages.append({"role": "user", "content": (
+                    f"TOML parse error: {e.args[0].splitlines()[0]}\n\n"
+                    "This is almost certainly caused by using double-quoted "
+                    "strings (\"...\") for values containing LaTeX backslashes. "
+                    "TOML double-quoted strings interpret backslashes as escape "
+                    "sequences (e.g. \\n becomes a newline, \\f becomes a form "
+                    "feed), which corrupts the math content.\n\n"
+                    "You MUST use TOML literal strings (triple single quotes "
+                    "'''...''') for ALL string values. Please regenerate the "
+                    "complete TOML output with '''...''' for every field."
+                )})
             else:
                 print(f"    {_C.RED}TOML parse error (no retries left): "
                       f"{e}{_C.RESET}")

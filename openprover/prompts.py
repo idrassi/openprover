@@ -62,7 +62,8 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
     principles = (
         "- You are the project leader. Delegate ALL mathematical work to workers — including problem analysis, exploring structure, checking special cases, and brainstorming strategies. Use parallel workers aggressively.\n"
         "- On step 1, immediately spawn workers to analyze the problem, explore key cases, and identify promising approaches. Do not spend your time exploring the problem yourself.\n"
-        "- Keep it simple when possible (some proofs might be easy). Be brief and focused.\n"
+        "- Some problems require finding an answer before proving something about it (e.g. \"find all n such that...\").\n"
+        "- Some problems are easy — that's OK. Don't overcomplicate things. A single worker might solve it in one shot.\n"
         "- Write clear, direct task descriptions for the workers. State exactly what the worker should do. Include all relevant context — workers only see what you give them.\n"
         "- You decide the proof strategy based on worker results. Balance exploration and direct proof attempts.\n"
         "- Store failed attempts in the repo - they prevent repeating mistakes.\n"

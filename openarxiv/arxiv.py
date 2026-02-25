@@ -4,6 +4,7 @@
 import argparse
 import gzip
 import io
+import json
 import os
 import re
 import shutil
@@ -406,6 +407,138 @@ class TOMLParseError(Exception):
     pass
 
 
+# ---------------------------------------------------------------------------
+# MathJax validation
+# ---------------------------------------------------------------------------
+
+VALIDATE_SCRIPT = Path(__file__).parent / "validate_mathjax.js"
+
+
+def validate_mathjax(problems: list[dict],
+                     save_dir: Path | None = None) -> list[str]:
+    """Validate MathJax rendering of problem statement/context fields.
+
+    Calls the Node.js validation script which mirrors the frontend's MathJax
+    config.  Returns a list of human-readable error strings (empty = all OK).
+    Degrades gracefully if node or the script is unavailable.
+
+    If *save_dir* is given, stores input.json and output.json there.
+    """
+    if not problems:
+        return []
+
+    fields = []
+    for i, prob in enumerate(problems):
+        name = prob.get("name", f"problem {i}")
+        for key in ("statement", "context"):
+            text = prob.get(key, "")
+            if text.strip():
+                fields.append({"field": f"{name} → {key}", "text": text})
+    if not fields:
+        return []
+
+    input_json = json.dumps(fields, indent=2)
+    if save_dir is not None:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        (save_dir / "input.json").write_text(input_json)
+
+    try:
+        proc = subprocess.run(
+            ["node", str(VALIDATE_SCRIPT)],
+            input=input_json,
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        print(f"    {_C.YELLOW}node not found, skipping MathJax validation{_C.RESET}")
+        return []
+    except subprocess.TimeoutExpired:
+        print(f"    {_C.YELLOW}MathJax validation timed out{_C.RESET}")
+        return []
+
+    if proc.returncode != 0:
+        msg = proc.stderr.strip()[:200]
+        print(f"    {_C.YELLOW}MathJax validation failed: {msg}{_C.RESET}")
+        if save_dir is not None:
+            (save_dir / "error.txt").write_text(msg)
+        return []
+
+    if save_dir is not None:
+        (save_dir / "output.json").write_text(proc.stdout)
+
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print(f"    {_C.YELLOW}MathJax validation returned invalid JSON{_C.RESET}")
+        return []
+
+    errors = []
+    for err in data.get("errors", []):
+        field = err.get("field", "?")
+        msg = err.get("message", "?")
+        expr = err.get("expression", "")
+        # Truncate long expressions for readability
+        if len(expr) > 80:
+            expr = expr[:77] + "..."
+        errors.append(f"[{field}] {msg}: {expr}")
+    return errors
+
+
+# Regex to strip math delimiters so bracket searches don't match inside math.
+_MATH_RE = re.compile(r"\$\$[\s\S]*?\$\$|\$[^$\n]+?\$")
+# Regex to find [bracketed] references in plain text.
+_BRACKET_RE = re.compile(r"\[([^\]]+)\]")
+
+
+def check_references(problems: list[dict]) -> list[str]:
+    """Check that references in statement/context match the references list.
+
+    Mirrors the frontend's linkifyRefs logic: every [Tag] bracket in text must
+    match (via substring) a tag in the references list, and every reference tag
+    must be cited somewhere.  Returns a list of human-readable error strings.
+    """
+    errors = []
+    for i, prob in enumerate(problems):
+        name = prob.get("name", f"problem {i}")
+        tags = {r.get("tag", "") for r in prob.get("references", []) if r.get("tag")}
+        sorted_tags = sorted(tags, key=len, reverse=True)
+
+        # Collect all bracket contents from statement + context, skipping math
+        cited_tags: set[str] = set()
+        unmatched_brackets: list[str] = []
+        for key in ("statement", "context"):
+            text = prob.get(key, "")
+            if not text:
+                continue
+            # Strip math so we don't match brackets inside $...$ or $$...$$
+            text_no_math = _MATH_RE.sub("", text)
+            for m in _BRACKET_RE.finditer(text_no_math):
+                bracket = m.group(1)
+                hit = None
+                for tag in sorted_tags:
+                    if tag in bracket:
+                        hit = tag
+                        break
+                if hit:
+                    cited_tags.add(hit)
+                else:
+                    unmatched_brackets.append(bracket)
+
+        # Report brackets that don't match any reference tag
+        for bracket in unmatched_brackets:
+            errors.append(
+                f"{name}: unresolved reference [{bracket}] — "
+                f"no matching tag in references list"
+            )
+
+        # Report reference tags never cited in text
+        for tag in sorted(tags - cited_tags):
+            errors.append(
+                f"{name}: reference tag [{tag}] is in the references list "
+                f"but never cited in statement or context"
+            )
+    return errors
+
+
 def parse_toml_response(text: str) -> list[dict]:
     """Extract TOML from LLM response and parse the problems list.
 
@@ -574,6 +707,9 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False,
     if force and llm_calls_dir.exists():
         shutil.rmtree(llm_calls_dir)
     llm_calls_dir.mkdir(exist_ok=True)
+    mathjax_dir = paper_dir / "mathjax_checks"
+    if force and mathjax_dir.exists():
+        shutil.rmtree(mathjax_dir)
 
     prompt = build_prompt(source_dir)
 
@@ -596,6 +732,7 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False,
 
     max_attempts = 1 + retries
     last_error = None
+    attempt = 0
 
     for attempt in range(max_attempts):
         call_dir = llm_calls_dir / f"{attempt:03d}"
@@ -617,6 +754,85 @@ def extract_paper(paper_dir: Path, model: str, force: bool = False,
                 print(f"    {_C.RED}TOML parse error (no retries left): "
                       f"{e}{_C.RESET}")
                 problems = []
+
+    # Validation refinement: if problems parsed OK, validate MathJax
+    # rendering and reference consistency, ask the LLM to fix errors
+    # (up to 2 rounds).
+    validation_retries = 2
+    mathjax_checks_dir = paper_dir / "mathjax_checks"
+    mathjax_check_num = 0
+    if problems and not last_error:
+        for _refine in range(validation_retries):
+            # MathJax check
+            check_dir = mathjax_checks_dir / f"{mathjax_check_num:03d}"
+            mathjax_check_num += 1
+            math_errors = validate_mathjax(problems, save_dir=check_dir)
+
+            # Reference check
+            ref_errors = check_references(problems)
+
+            all_errors = math_errors + ref_errors
+            if not all_errors:
+                break
+
+            if math_errors:
+                print(f"    {_C.YELLOW}MathJax errors "
+                      f"({len(math_errors)}):{_C.RESET}")
+                for e in math_errors:
+                    print(f"      {_C.DIM}{e}{_C.RESET}")
+            if ref_errors:
+                print(f"    {_C.YELLOW}Reference errors "
+                      f"({len(ref_errors)}):{_C.RESET}")
+                for e in ref_errors:
+                    print(f"      {_C.DIM}{e}{_C.RESET}")
+
+            # Build feedback message with all errors
+            feedback_parts = []
+            if math_errors:
+                error_list = "\n".join(f"  - {e}" for e in math_errors)
+                feedback_parts.append(
+                    "MathJax rendering errors — these expressions fail "
+                    "to render in the browser:\n"
+                    f"{error_list}\n\n"
+                    "Remember: \\begin/\\end environments like "
+                    "\\begin{conjecture}, \\begin{enumerate}, \\begin{align} "
+                    "must NOT appear as top-level text. Use markdown instead "
+                    "(**Conjecture.**, lists, $$...$$). Math-mode environments "
+                    "like \\begin{cases}, \\begin{bmatrix} are OK only inside "
+                    "$...$ or $$...$$ delimiters."
+                )
+            if ref_errors:
+                error_list = "\n".join(f"  - {e}" for e in ref_errors)
+                feedback_parts.append(
+                    "Reference errors — the references list must match "
+                    "what is cited in the text:\n"
+                    f"{error_list}\n\n"
+                    "Every [Tag] bracket in statement/context must have a "
+                    "matching entry in the references list, and every entry "
+                    "in the references list must be cited as [Tag] somewhere "
+                    "in the statement or context."
+                )
+
+            messages.append({"role": "assistant", "content": result["content"]})
+            messages.append({"role": "user", "content": (
+                "The extracted problems have validation errors.\n\n"
+                + "\n\n".join(feedback_parts)
+                + "\n\nPlease regenerate the COMPLETE corrected TOML output."
+            )})
+
+            attempt += 1
+            call_dir = llm_calls_dir / f"{attempt:03d}"
+            result = call_llm(messages, model)
+            _save_llm_call(call_dir, result)
+
+            try:
+                problems = parse_toml_response(result["content"])
+            except TOMLParseError as e:
+                last_error = str(e)
+                print(f"    {_C.RED}TOML parse error during "
+                      f"refinement: {e.args[0].splitlines()[0]}{_C.RESET}")
+                problems = []
+                break
 
     n_prob = len(problems)
     cost_str = _fmt_cost(result["usage"].get("cost"))

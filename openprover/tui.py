@@ -47,7 +47,8 @@ HELP_TEXT = f"""\
     w           toggle whiteboard view
     a           toggle autonomous mode
     {DIM}←/→{RESET}         switch tabs
-    pgup/pgdn   scroll chat history
+    {DIM}↑/↓{RESET}         scroll chat history
+    pgup/pgdn   scroll chat history (page)
     ?           this help
     esc/enter   dismiss overlay
 
@@ -680,10 +681,10 @@ class TUI:
                                     self._key_queue.put(seq)
                                 i += 4
                                 continue
-                            # Arrow keys — handle ←/→ directly for tab switching
+                            # Arrow keys — handle directly during streaming
                             arrow = chr(data[i + 2])
                             seq = chr(0x1b) + '[' + arrow
-                            if self._can_handle_directly() and arrow in ('C', 'D'):
+                            if self._can_handle_directly() and arrow in ('A', 'B', 'C', 'D'):
                                 self._process_key(seq)
                                 i += 3
                                 continue
@@ -757,6 +758,10 @@ class TUI:
             self._scroll_up()
         elif ch == '\x1b[6~':
             self._scroll_down()
+        elif ch == '\x1b[A':  # up arrow — scroll up
+            self._scroll_lines_up()
+        elif ch == '\x1b[B':  # down arrow — scroll down
+            self._scroll_lines_down()
         elif ch == 'scroll_up':
             self._scroll_lines_up()
         elif ch == 'scroll_down':

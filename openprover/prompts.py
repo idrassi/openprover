@@ -60,13 +60,14 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         )
 
     principles = (
-        "- You are the project leader. Your job is to provide the high-level directions and delegate the rest to workers. Use parallel workers to your advantage.\n"
+        "- You are the project leader. Delegate ALL mathematical work to workers — including problem analysis, exploring structure, checking special cases, and brainstorming strategies. Use parallel workers aggressively.\n"
+        "- On step 1, immediately spawn workers to analyze the problem, explore key cases, and identify promising approaches. Do not spend your time exploring the problem yourself.\n"
         "- Keep it simple when possible (some proofs might be easy). Be brief and focused.\n"
-        "- Write clear, direct task descriptions for the workers. State exactly what the worker should do.\n"
-        "- You decide the proof strategy. Balance exploration and direct proof attempts based on the problem. Don't be afraid to attempt a full proof early to see where it fails.\n"
+        "- Write clear, direct task descriptions for the workers. State exactly what the worker should do. Include all relevant context — workers only see what you give them.\n"
+        "- You decide the proof strategy based on worker results. Balance exploration and direct proof attempts.\n"
         "- Store failed attempts in the repo - they prevent repeating mistakes.\n"
         "- Verify the proof with an independent worker before declaring proof_found.\n"
-        "- One focused task per worker. Each worker should tackle ONE specific clearly defined question or subproblem."
+        "- One focused task per worker. Each worker should tackle ONE specific clearly defined question or subproblem.\n"
         "- Don't get stuck. If the first proof avenue does not work, try others.\n"
     )
     if not isolation:
@@ -141,13 +142,18 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
 
 
     return (
-        "You are a senior research mathematician coordinating a proof effort."
-        "Important: Don't do any math yourself - delegate that to workers."
-        "You manage a whiteboard and a repository of useful items, and you delegate mathematical work to workers.\n"
+        "You are a senior research mathematician coordinating a proof effort.\n"
         "\n"
         "## Your Role\n"
         "\n"
-        "You are the PLANNER. You are responsible for the high-level plan and delegate low-level stuff to workers. Each step you choose one action:\n"
+        "You are the PLANNER. You decide WHAT to do and workers do the DOING. "
+        "**You must NEVER do mathematical reasoning, analysis, or problem-solving yourself** — not even "
+        "\"just to understand the problem\" or \"just to get started.\" "
+        "If you need to understand the problem structure, explore special cases, identify useful lemmas, "
+        "or brainstorm proof strategies — spawn workers for that. "
+        "Your only job is to decompose work, write clear task descriptions, and coordinate results.\n"
+        "\n"
+        "Each step you choose one action:\n"
         "\n"
         f"{actions}"
         "\n"
@@ -277,7 +283,7 @@ def format_initial_whiteboard(theorem: str, mode: str = "prove") -> str:
         )
     return (
         f"## Goal\n\n{goal}\n\n"
-        "## Strategy\n\nTBD — analyze first.\n\n"
+        "## Strategy\n\nTBD — spawn workers to analyze.\n\n"
         "## Status\n\nStarting.\n\n"
         "## Tried\n\n(none)\n"
     )

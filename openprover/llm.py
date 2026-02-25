@@ -94,6 +94,10 @@ class LLMClient:
         self.call_count += 1
         call_num = self.call_count
 
+        # Archive input immediately so it can be inspected while LLM runs
+        self._archive(call_num, label, prompt, system_prompt, json_schema,
+                      None, None, 0, archive_path)
+
         use_streaming = bool(stream_callback)
         logger.info("[%s] calling %s%s", label, self.model,
                     " (streaming)" if use_streaming else "")
@@ -352,6 +356,11 @@ class HFClient:
         """
         self.call_count += 1
         call_num = self.call_count
+
+        # Archive input immediately so it can be inspected while LLM runs
+        self._archive(call_num, label, prompt, system_prompt, json_schema,
+                      None, None, 0, archive_path)
+
         logger.info("[%s] calling %s%s", label, self.model,
                     " (streaming)" if stream_callback else "")
 

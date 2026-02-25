@@ -626,10 +626,8 @@ def _make_slug(name: str, existing: set[str]) -> str:
 def _toml_str(s: str) -> str:
     """Format a string as a TOML value. Uses literal strings for content with
     backslashes (LaTeX), basic strings otherwise."""
-    if "\\" in s or "\n" in s:
-        if "\n" in s:
-            return f"'''\n{s}\n'''"
-        return f"'{s}'"
+    if "\\" in s or "\n" in s or "'" in s:
+        return f"'''\n{s}\n'''"
     escaped = s.replace('"', '\\"')
     return f'"{escaped}"'
 

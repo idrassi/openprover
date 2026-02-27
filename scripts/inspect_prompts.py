@@ -144,6 +144,58 @@ def make_pages(data: dict, step: int | str, role: str, label: str) -> list[dict]
     return pages
 
 
+def make_lean_page(step: int, label: str, lean_code: str, result_text: str) -> dict:
+    """Create a page for a Lean verification attempt."""
+    success = result_text.strip() == "OK"
+    segments = [
+        ("normal", "```lean\n" + lean_code + "\n```"),
+        ("normal", "\n\n── Verification Result ──\n"),
+    ]
+    if success:
+        segments.append(("normal", "OK"))
+    else:
+        segments.append(("red", result_text))
+
+    return {
+        "type": "lean_ok" if success else "lean_err",
+        "step": step,
+        "label": label,
+        "segments": segments,
+        "thinking": "",
+        "metadata": "OK" if success else "FAILED",
+    }
+
+
+def load_lean_pages(step_dir: Path, step_num: int) -> list[dict]:
+    """Load Lean verification pages from a step's lean/ directory."""
+    lean_dir = step_dir / "lean"
+    if not lean_dir.exists():
+        return []
+
+    pages = []
+
+    # Item verifications: item_N_slug.lean + result_N_slug.txt
+    item_files = sorted(lean_dir.glob("item_*.lean"))
+    for item_path in item_files:
+        name = item_path.stem  # e.g. "item_0_my-slug"
+        parts = name.split("_", 2)  # ["item", "0", "my-slug"]
+        slug = parts[2] if len(parts) >= 3 else name
+        result_path = lean_dir / f"result_{'_'.join(parts[1:])}.txt"
+        lean_code = item_path.read_text()
+        result_text = result_path.read_text() if result_path.exists() else "(no result)"
+        pages.append(make_lean_page(step_num, f"Lean [[{slug}]]", lean_code, result_text))
+
+    # Proof submission: proof_attempt.lean + proof_result.txt
+    proof_path = lean_dir / "proof_attempt.lean"
+    if proof_path.exists():
+        lean_code = proof_path.read_text()
+        result_path = lean_dir / "proof_result.txt"
+        result_text = result_path.read_text() if result_path.exists() else "(no result)"
+        pages.append(make_lean_page(step_num, "Lean Proof Attempt", lean_code, result_text))
+
+    return pages
+
+
 def load_pages(run_dir: Path) -> list[dict]:
     """Load all pages from a run directory."""
     pages = []
@@ -191,6 +243,9 @@ def load_pages(run_dir: Path) -> list[dict]:
             search_data = load_json(workers_dir / "search_call.json")
             if search_data:
                 pages.extend(make_pages(search_data, step_num, "search", "Search"))
+
+        # Lean verification attempts
+        pages.extend(load_lean_pages(step_dir, step_num))
 
     # Discussion call at run root
     discussion = load_json(run_dir / "discussion_call.json")
@@ -272,12 +327,12 @@ class InspectTUI:
                     self.scroll_offset += content_h // 2
                     self._draw()
                 elif key == "g":
-                    self.page_idx = 0
                     self.scroll_offset = 0
                     self._draw()
                 elif key == "G":
-                    self.page_idx = len(self.pages) - 1
-                    self.scroll_offset = 0
+                    lines = self._render_lines(self.pages[self.page_idx])
+                    content_h = self.rows - HEADER_ROWS
+                    self.scroll_offset = max(0, len(lines) - content_h)
                     self._draw()
         finally:
             self._cleanup()
@@ -397,7 +452,14 @@ class InspectTUI:
         step_str = f"Step {step}" if isinstance(step, int) else str(step).capitalize()
         label = page["label"]
         page_type = page["type"]
-        type_color = RED if page_type == "error" else BLUE if page_type == "prompt" else GREEN
+        if page_type == "error" or page_type == "lean_err":
+            type_color = RED
+        elif page_type == "prompt":
+            type_color = BLUE
+        elif page_type == "lean_ok":
+            type_color = CYAN
+        else:
+            type_color = GREEN
         pos = f"[{self.page_idx + 1}/{len(self.pages)}]"
         meta = page.get("metadata", "")
         trace_indicator = f"{YELLOW}[trace on]{RESET}" if self.trace_visible else f"{DIM}[trace off]{RESET}"
@@ -414,7 +476,7 @@ class InspectTUI:
         if len(lines) > content_h:
             pct = int(self.scroll_offset / max(1, max_scroll) * 100)
             scroll_info = f" {DIM}scroll:{pct}%{RESET}"
-        controls = f" {DIM}←/→ pages  ↑/↓/scroll  t trace  g/G first/last  q quit{scroll_info}{RESET}"
+        controls = f" {DIM}←/→ pages  ↑/↓/scroll  t trace  g/G top/bottom  q quit{scroll_info}{RESET}"
         buf.append(controls)
 
         # Separator

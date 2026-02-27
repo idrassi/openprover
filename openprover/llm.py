@@ -293,6 +293,7 @@ class LLMClient:
 MODEL_CONTEXT_LENGTHS = {
     "lm-provers/QED-Nano": 49152,
     "Qwen/Qwen3-4B-Thinking-2507": 32768,
+    "MiniMaxAI/MiniMax-M2.5": 196608,
 }
 
 
@@ -300,7 +301,7 @@ class HFClient:
     """Calls an OpenAI-compatible HTTP server (e.g. serve_hf.py) and archives interactions."""
 
     def __init__(self, model: str, archive_dir: Path, base_url: str = "http://localhost:8000",
-                 answer_reserve: int = 4096):
+                 answer_reserve: int = 4096, vllm: bool = False):
         if model not in MODEL_CONTEXT_LENGTHS:
             raise ValueError(
                 f"Unknown model {model!r}. "
@@ -311,6 +312,7 @@ class HFClient:
         self.archive_dir = archive_dir
         self.call_count = 0
         self.total_cost = 0.0
+        self.vllm = vllm
         self._interrupted = threading.Event()
         self.max_context_length = MODEL_CONTEXT_LENGTHS[model]
         self.max_output_tokens = self.max_context_length
@@ -329,14 +331,15 @@ class HFClient:
         self._interrupted.clear()
 
     def _check_server(self):
-        """Verify the HF server is reachable. Fail fast with a clear error."""
+        """Verify the server is reachable. Fail fast with a clear error."""
         try:
             resp = urllib.request.urlopen(f"{self.base_url}/health", timeout=5)
-            json.loads(resp.read())
+            resp.read()  # drain response (may be empty for vLLM)
         except (urllib.error.URLError, ConnectionError, OSError) as e:
+            hint = "vllm serve ..." if self.vllm else "python scripts/serve_hf.py"
             raise SystemExit(
-                f"Error: cannot reach HF server at {self.base_url}\n"
-                f"  Start it with: python scripts/serve_hf.py\n"
+                f"Error: cannot reach server at {self.base_url}\n"
+                f"  Start it with: {hint}\n"
                 f"  ({e})"
             )
 
@@ -368,15 +371,25 @@ class HFClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "max_output_tokens": self.max_output_tokens,
-            "max_thinking_tokens": self.max_thinking_tokens,
-            "temperature": 0.6,
-            "top_p": 0.95,
-            "stream": bool(stream_callback),
-        }
+        if self.vllm:
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": self.max_output_tokens,
+                "temperature": 0.6,
+                "top_p": 0.95,
+                "stream": bool(stream_callback),
+            }
+        else:
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "max_output_tokens": self.max_output_tokens,
+                "max_thinking_tokens": self.max_thinking_tokens,
+                "temperature": 0.6,
+                "top_p": 0.95,
+                "stream": bool(stream_callback),
+            }
 
         start = time.time()
 
@@ -448,8 +461,13 @@ class HFClient:
                           None, "interrupted", elapsed_ms, archive_path)
             raise Interrupted()
 
-        full_text = raw["choices"][0]["message"]["content"]
-        result_text, thinking_text = _split_think_tags(full_text)
+        msg = raw["choices"][0]["message"]
+        reasoning = msg.get("reasoning_content") or ""
+        full_text = msg.get("content", "")
+        if reasoning:
+            result_text, thinking_text = full_text, reasoning
+        else:
+            result_text, thinking_text = _split_think_tags(full_text)
 
         self._archive(call_num, label, prompt, system_prompt, json_schema,
                       raw, None, elapsed_ms, archive_path,
@@ -492,8 +510,8 @@ class HFClient:
 
         thinking_parts: list[str] = []
         output_parts: list[str] = []
-        in_thinking = True   # QED-Nano starts in thinking mode (no <think> tag)
-        pending = ""         # buffer for partial </think> detection
+        in_thinking = not self.vllm  # serve_hf starts in thinking; vLLM uses reasoning_content
+        pending = ""         # buffer for partial </think> detection (serve_hf only)
         interrupted = False
 
         for raw_line in resp:
@@ -511,37 +529,50 @@ class HFClient:
                 chunk = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
-            content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-            if not content:
-                continue
+            delta = chunk.get("choices", [{}])[0].get("delta", {})
 
-            if in_thinking:
-                pending += content
-                # Look for </think> in pending buffer
-                end_idx = pending.find("</think>")
-                if end_idx >= 0:
-                    think_part = pending[:end_idx]
-                    if think_part:
-                        callback(think_part, "thinking")
-                        thinking_parts.append(think_part)
-                    in_thinking = False
-                    remainder = pending[end_idx + 8:]
-                    pending = ""
-                    if remainder.strip():
-                        callback(remainder, "text")
-                        output_parts.append(remainder)
-                else:
-                    # Emit all but last 8 chars (could be partial </think>)
-                    safe = len(pending) - 8
-                    if safe > 0:
-                        callback(pending[:safe], "thinking")
-                        thinking_parts.append(pending[:safe])
-                        pending = pending[safe:]
+            if self.vllm:
+                # vLLM with --reasoning-parser separates thinking/content
+                reasoning = delta.get("reasoning_content", "")
+                content = delta.get("content", "")
+                if reasoning:
+                    callback(reasoning, "thinking")
+                    thinking_parts.append(reasoning)
+                if content:
+                    callback(content, "text")
+                    output_parts.append(content)
             else:
-                callback(content, "text")
-                output_parts.append(content)
+                content = delta.get("content", "")
+                if not content:
+                    continue
 
-        # Flush any remaining pending buffer
+                if in_thinking:
+                    pending += content
+                    # Look for </think> in pending buffer
+                    end_idx = pending.find("</think>")
+                    if end_idx >= 0:
+                        think_part = pending[:end_idx]
+                        if think_part:
+                            callback(think_part, "thinking")
+                            thinking_parts.append(think_part)
+                        in_thinking = False
+                        remainder = pending[end_idx + 8:]
+                        pending = ""
+                        if remainder.strip():
+                            callback(remainder, "text")
+                            output_parts.append(remainder)
+                    else:
+                        # Emit all but last 8 chars (could be partial </think>)
+                        safe = len(pending) - 8
+                        if safe > 0:
+                            callback(pending[:safe], "thinking")
+                            thinking_parts.append(pending[:safe])
+                            pending = pending[safe:]
+                else:
+                    callback(content, "text")
+                    output_parts.append(content)
+
+        # Flush any remaining pending buffer (serve_hf only)
         if pending:
             kind = "thinking" if in_thinking else "text"
             callback(pending, kind)

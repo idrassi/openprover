@@ -2,6 +2,7 @@
 
 import os
 import queue
+import re
 import select
 import shutil
 import signal
@@ -1205,11 +1206,46 @@ class TUI:
             if not self.trace_visible:
                 return 0
             src = entry.text.splitlines() or [""]
-            return sum(max((len(line) + max_w - 1) // max_w, 1) for line in src)
+            return sum(
+                len(self._wrap_visual_text(f'  {DIM}{line}{RESET}', max_w))
+                for line in src
+            )
         if entry.is_output:
             src = entry.text.splitlines() or [""]
-            return sum(max((len(line) + max_w - 1) // max_w, 1) for line in src)
-        return 1
+            return sum(
+                len(self._wrap_visual_text(f'  {line}', max_w))
+                for line in src
+            )
+        return len(self._wrap_visual_text(f' {entry.text}', max_w))
+
+    @staticmethod
+    def _wrap_visual_text(text: str, max_w: int) -> list[str]:
+        """Wrap text by visible width while preserving ANSI sequences."""
+        if max_w <= 0:
+            return [text]
+        parts: list[str] = []
+        buf: list[str] = []
+        visible = 0
+        i = 0
+        n = len(text)
+        while i < n:
+            if text[i] == '\x1b':
+                m = re.match(r'\x1b\[[0-9;?]*[ -/]*[@-~]', text[i:])
+                if m:
+                    buf.append(m.group(0))
+                    i += len(m.group(0))
+                    continue
+            ch = text[i]
+            buf.append(ch)
+            i += 1
+            visible += 1
+            if visible >= max_w:
+                parts.append("".join(buf))
+                buf = []
+                visible = 0
+        if buf or not parts:
+            parts.append("".join(buf))
+        return parts
 
     def _selection_render_range(self, tab: _Tab) -> tuple[int, int] | None:
         max_w = max(self.cols - 4, 20)
@@ -1350,42 +1386,48 @@ class TUI:
                 if not self.trace_visible:
                     continue
                 for tline in entry.text.splitlines():
-                    while len(tline) > max_w:
-                        text = f'  {DIM}{tline[:max_w]}{RESET}'
-                        if proposal_selected and idx >= self._proposal_log_start:
-                            lines.append(f' {GREEN}▎{RESET}{text}')
-                        else:
-                            lines.append(text)
-                        tline = tline[max_w:]
                     text = f'  {DIM}{tline}{RESET}'
-                    if proposal_selected and idx >= self._proposal_log_start:
-                        lines.append(f' {GREEN}▎{RESET}{text}')
-                    else:
-                        lines.append(text)
+                    for wrapped in self._wrap_visual_text(text, max_w):
+                        if proposal_selected and idx >= self._proposal_log_start:
+                            lines.append(f' {GREEN}▎{RESET}{wrapped}')
+                        else:
+                            lines.append(wrapped)
+                if not entry.text.splitlines():
+                    text = f'  {DIM}{RESET}'
+                    for wrapped in self._wrap_visual_text(text, max_w):
+                        if proposal_selected and idx >= self._proposal_log_start:
+                            lines.append(f' {GREEN}▎{RESET}{wrapped}')
+                        else:
+                            lines.append(wrapped)
             elif entry.is_output:
                 if tab.id == "planner":
                     continue
                 for tline in entry.text.splitlines():
-                    while len(tline) > max_w:
-                        text = f'  {tline[:max_w]}'
-                        if proposal_selected and idx >= self._proposal_log_start:
-                            lines.append(f' {GREEN}▎{RESET}{text}')
-                        else:
-                            lines.append(text)
-                        tline = tline[max_w:]
                     text = f'  {tline}'
-                    if proposal_selected and idx >= self._proposal_log_start:
-                        lines.append(f' {GREEN}▎{RESET}{text}')
-                    else:
-                        lines.append(text)
+                    for wrapped in self._wrap_visual_text(text, max_w):
+                        if proposal_selected and idx >= self._proposal_log_start:
+                            lines.append(f' {GREEN}▎{RESET}{wrapped}')
+                        else:
+                            lines.append(wrapped)
+                if not entry.text.splitlines():
+                    text = '  '
+                    for wrapped in self._wrap_visual_text(text, max_w):
+                        if proposal_selected and idx >= self._proposal_log_start:
+                            lines.append(f' {GREEN}▎{RESET}{wrapped}')
+                        else:
+                            lines.append(wrapped)
             else:
                 is_step = entry.step_idx >= 0
+                base = f' {entry.text}'
+                wrapped_lines = self._wrap_visual_text(base, max_w)
                 if is_step and entry.step_idx == self._nav_step:
-                    lines.append(f' {GREEN}▎{RESET} {entry.text}')
+                    for wrapped in wrapped_lines:
+                        lines.append(f' {GREEN}▎{RESET}{wrapped}')
                 elif proposal_selected and idx >= self._proposal_log_start:
-                    lines.append(f' {GREEN}▎{RESET} {entry.text}')
+                    for wrapped in wrapped_lines:
+                        lines.append(f' {GREEN}▎{RESET}{wrapped}')
                 else:
-                    lines.append(f' {entry.text}')
+                    lines.extend(wrapped_lines)
         # Active streaming content (not yet baked)
         if tab.streaming:
             if tab.trace_buf and self.trace_visible:

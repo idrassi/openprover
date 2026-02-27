@@ -15,7 +15,7 @@ def main():
         prog="openprover",
         description="Theorem prover powered by language models",
     )
-    model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b"]
+    model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b", "minimax-m2.5"]
     parser.add_argument("theorem", nargs="?", help="Path to theorem statement file (.md)")
     parser.add_argument("--model", default="sonnet", choices=model_choices, help="Model to use for both planner and worker (default: sonnet)")
     parser.add_argument("--planner-model", choices=model_choices, default=None, help="Override model for planner (defaults to --model)")
@@ -64,7 +64,7 @@ def main():
     worker_model = args.worker_model or args.model
 
     # HF-backed models have no web search capability — force isolation
-    hf_models = {"qed-nano", "qwen3-4b"}
+    hf_models = {"qed-nano", "qwen3-4b", "minimax-m2.5"}
     if planner_model in hf_models and not args.isolation:
         args.isolation = True
 
@@ -78,13 +78,16 @@ def main():
     HF_MODEL_MAP = {
         "qed-nano": "lm-provers/QED-Nano",
         "qwen3-4b": "Qwen/Qwen3-4B-Thinking-2507",
+        "minimax-m2.5": "MiniMaxAI/MiniMax-M2.5",
     }
+    VLLM_MODELS = {"minimax-m2.5"}  # served via vLLM (standard OpenAI API)
 
     # Construct LLM client factories — Prover calls these after work_dir setup.
     def _make_client(model_alias, archive_dir):
         if model_alias in HF_MODEL_MAP:
             return HFClient(HF_MODEL_MAP[model_alias], archive_dir,
-                            base_url=args.hf_url, answer_reserve=args.answer_reserve)
+                            base_url=args.hf_url, answer_reserve=args.answer_reserve,
+                            vllm=model_alias in VLLM_MODELS)
         return LLMClient(model_alias, archive_dir)
 
     def make_planner_llm(archive_dir):

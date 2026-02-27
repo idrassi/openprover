@@ -1,6 +1,6 @@
 # OpenProver
 
-Theorem prover powered by language models. A **planner** coordinates proof search by maintaining a whiteboard and repository, delegating focused tasks to **parallel workers** via Claude CLI or HuggingFace-compatible models.
+Theorem prover powered by language models. A **planner** coordinates proof search by maintaining a whiteboard and repository, delegating focused tasks to **parallel workers** via Claude CLI or local models (vLLM, etc.).
 
 ## How it works
 
@@ -42,17 +42,17 @@ openprover --run-dir runs/sqrt2-irrational-20260217-143012
 # Offline mode (no web searches)
 openprover examples/cauchy_schwarz.md --isolation
 
-# Use a HuggingFace-compatible model
-openprover examples/infinite_primes.md --model qed-nano --hf-url http://localhost:8000
+# Use a local model (via vLLM or serve_hf.py)
+openprover examples/infinite_primes.md --model qed-nano --provider-url http://localhost:8000
 
 # Prove and formalize in Lean 4
 openprover examples/putnam_1962_a2.md \
-  --lean-project-dir ~/mathlib4 \
+  --lean-project ~/mathlib4 \
   --lean-theorem examples/putnam_1962_a2.lean
 
 # Formalize an existing proof (translate PROOF.md → PROOF.lean)
 openprover examples/putnam_1962_a2.md \
-  --lean-project-dir ~/mathlib4 \
+  --lean-project ~/mathlib4 \
   --lean-theorem examples/putnam_1962_a2.lean \
   --proof runs/putnam-1962-a2-20260223/PROOF.md
 ```
@@ -62,14 +62,14 @@ openprover examples/putnam_1962_a2.md \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--model` | `sonnet` | Model: `sonnet`, `opus`, or `qed-nano` |
-| `--hf-url` | `http://localhost:8000` | Server URL for HuggingFace models |
+| `--provider-url` | `http://localhost:8000` | Server URL for local models |
 | `--max-steps` | `50` | Step budget |
 | `--autonomous` | off | Run without human confirmation |
 | `--run-dir` | | Resume from an existing run directory |
 | `--isolation` | off | Disable literature search / web access |
 | `-P, --parallelism` | `1` | Max parallel workers per step |
-| `--lean-project-dir` | | Path to Lean project with lakefile |
-| `--lean-theorem` | | Path to THEOREM.lean (requires `--lean-project-dir`) |
+| `--lean-project` | | Path to Lean project with lakefile |
+| `--lean-theorem` | | Path to THEOREM.lean (requires `--lean-project`) |
 | `--proof` | | Path to existing PROOF.md (formalize-only mode) |
 | `--verbose` | off | Show full LLM responses |
 

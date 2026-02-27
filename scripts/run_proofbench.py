@@ -24,8 +24,8 @@ def main():
     parser.add_argument("problem", help="Problem ID (e.g. PB-Basic-001)")
     parser.add_argument("--list", action="store_true", help="List available problems and exit")
     parser.add_argument("--model", default="qed-nano", choices=["sonnet", "opus", "qed-nano"])
-    parser.add_argument("--hf-url", default="http://localhost:8000",
-                        help="HF server URL for qed-nano (default: http://localhost:8000)")
+    parser.add_argument("--provider-url", default="http://localhost:8000",
+                        help="Server URL for local models (default: http://localhost:8000)")
     parser.add_argument("--max-steps", type=int, default=50)
     parser.add_argument("--autonomous", action="store_true")
     parser.add_argument("--isolation", action="store_true")
@@ -55,7 +55,7 @@ def main():
 
     cmd = ["openprover", theorem_path, "--model", args.model, "--max-steps", str(args.max_steps)]
     if args.model == "qed-nano":
-        cmd.extend(["--hf-url", args.hf_url])
+        cmd.extend(["--provider-url", args.provider_url])
     if args.autonomous:
         cmd.append("--autonomous")
     if args.isolation:

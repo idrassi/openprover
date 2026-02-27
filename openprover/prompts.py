@@ -27,7 +27,7 @@ _TQ = '"""'  # triple-quote for embedding in prompts
 
 def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True,
                           lean_mode: str = "prove", num_sorries: int = 0,
-                          step_num: int = 1) -> str:
+                          step_num: int = 1, lean_items: bool = False) -> str:
     """Build the planner system prompt, conditionally omitting actions."""
     has_lean = lean_mode in ("prove_and_formalize", "formalize_only")
 
@@ -37,11 +37,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         "- **write_items**: Create, update, or delete one or more repo items.\n"
         "- **read_theorem**: Re-read the original theorem statement(s) and any provided proof.\n"
     )
-    if lean_mode == "formalize_only":
-        actions += (
-            "- **proof_found**: NOT AVAILABLE in formalize-only mode. Use submit_lean_proof instead.\n"
-        )
-    else:
+    if lean_mode != "formalize_only":
         actions += (
             "- **proof_found**: Declare success with an informal proof. **This terminates the session** (unless a formal Lean proof is also required). "
             "You must be confident the proof is correct - it must have been independently verified by a worker.\n"
@@ -60,8 +56,8 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         )
 
     principles = (
-        "- You are the project leader. Delegate ALL mathematical work to workers — including problem analysis, exploring structure, checking special cases, and brainstorming strategies. Use parallel workers aggressively.\n"
-        "- On step 1, immediately spawn workers to analyze the problem, explore key cases, and identify promising approaches. Do not spend your time exploring the problem yourself.\n"
+        "- You are the project leader. Delegate all mathematical work to workers - including problem analysis, exploring structure, checking special cases, and brainstorming strategies. Use parallel workers aggressively.\n"
+        "- On step 1, immediately spawn workers to analyze the problem, explore key cases, and identify promising approaches. Do not spend too much time exploring the problem yourself.\n"
         "- Some problems require finding an answer before proving something about it (e.g. \"find all n such that...\").\n"
         "- Some problems are easy — that's OK. Don't overcomplicate things. A single worker might solve it in one shot.\n"
         "- Write clear, direct task descriptions for the workers. State exactly what the worker should do. Include all relevant context — workers only see what you give them.\n"
@@ -73,18 +69,22 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
     )
     if not isolation:
         principles += "- Use literature_search sparingly (2-3 times max). Store results in the repo immediately.\n"
+    if lean_items:
+        principles += (
+            "- Use write_items with format=\"lean\" to develop and test Lean code snippets. "
+            "They are saved as .lean files in the repo and auto-verified by `lake env lean`. "
+            "Items that fail verification are NOT saved.\n"
+        )
     if lean_mode == "prove_and_formalize":
         principles += (
             "- A formal Lean 4 proof (PROOF.lean) is also required. The session ends only when BOTH proof_found AND submit_lean_proof succeed.\n"
-            "- Use write_items with format=\"lean\" to test Lean snippets (they get auto-verified by `lake env lean`).\n"
-            "- After you found a proof in English, use the read_theorem action to see the formal theorem statement in Lean."
+            "- After you found a proof in English, use the read_theorem action to see the formal theorem statement in Lean.\n"
             "- Use submit_lean_proof for the final formal proof submission.\n"
         )
     elif lean_mode == "formalize_only":
         principles += (
             "- An informal proof (PROOF.md) is already provided. Your only goal is to produce PROOF.lean.\n"
             "- Use read_theorem to view the informal proof and Lean theorem statement.\n"
-            "- Use write_items with format=\"lean\" to iteratively develop and test Lean code snippets.\n"
             "- Use submit_lean_proof to submit the final formalized proof. The session ends when it succeeds.\n"
         )
 
@@ -111,17 +111,30 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
     )
     if not isolation:
         toml_fields += f'**literature_search**: `search_query = "..."` and `search_context = {_TQ}...{_TQ}`\n'
-    if has_lean:
+    if lean_items:
         toml_fields += (
-            f"\n**write_items** (lean format — auto-verified): add `format = \"lean\"` to the item:\n"
+            f"\n**write_items** (lean format — auto-verified): add `format = \"lean\"` to the item. "
+            f"Include natural language descriptions of all theorems, definitions, and proofs as `--` comments. "
+            f"The first comment line is the summary.\n"
             "```toml\n"
             "[[items]]\n"
             'slug = "helper-lemma"\n'
             'format = "lean"\n'
             f"content = {_TQ}\n"
-            "-- Lean 4 code here\n"
+            "-- Summary: n * 0 = 0 for all natural numbers.\n"
+            "\n"
+            "-- Multiplying any natural number by zero yields zero.\n"
+            "-- Proof: by induction on n, using the definition of Nat.mul.\n"
+            "theorem mul_zero (n : Nat) : n * 0 = 0 := by\n"
+            "  induction n with\n"
+            "  | zero => rfl\n"
+            "  | succ n ih => simp [Nat.succ_mul, ih]\n"
             f"{_TQ}\n"
             "```\n"
+            "Items that fail Lean verification are NOT saved to the repo.\n"
+        )
+    if has_lean:
+        toml_fields += (
             f"\n**submit_lean_proof**: provide {num_sorries} `[[lean_blocks]]` section(s) + optional `lean_context`:\n"
             "```toml\n"
             f"lean_context = {_TQ}\n"
@@ -166,19 +179,30 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         "\n"
         "Terse, dense, like shorthand on a real whiteboard:\n"
         "- Sections: Goal, Strategy, Status, Open Questions, Tried\n"
-        "- Use LaTeX: $inline$ and $$display$$\n"
+        "- Use LaTeX (will be displayed via MathJax): $inline$ and $$display$$\n"
         "- Abbreviations and arrows freely\n"
         '"WLOG assume $p,q$ coprime" not "Without loss of generality..."\n'
         "\n"
         "## Repo Items\n"
         "\n"
-        "Items in the repo are [[slug]]-referenced markdown files. Each has format:\n"
+        "Items in the repo are [[slug]]-referenced files. Markdown items have format:\n"
         "```\n"
         "Summary: One sentence.\n"
         "\n"
         "<full content>\n"
         "```\n"
         "\n"
+        + (
+            "Lean items (format=\"lean\") are `.lean` files. The first `-- ` comment line is the summary:\n"
+            "```lean\n"
+            "-- Summary: One sentence.\n"
+            "\n"
+            "-- Natural language description of each definition/theorem/proof as comments.\n"
+            "theorem foo : ... := by ...\n"
+            "```\n"
+            "\n"
+            if lean_items else ""
+        ) +
         "Store: proven lemmas, failed attempts (brief), key observations, literature findings.\n"
         "Each item should be self-contained and atomic - one logical thing per item.\n"
         "Don't store: trivial facts, work-in-progress that belongs on the whiteboard.\n"

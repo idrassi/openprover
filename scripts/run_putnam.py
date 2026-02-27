@@ -46,7 +46,7 @@ def _run_problem(problem_name: str, statement: str, lean_dir: Path,
     if args.worker_model:
         cmd.extend(["--worker-model", args.worker_model])
 
-    if not args.no_lean:
+    if not args.informal:
         lean_theorem_path = lean_dir / "src" / f"{problem_name}.lean"
         if lean_theorem_path.is_file():
             cmd.extend(["--lean-project", str(lean_dir)])
@@ -133,7 +133,8 @@ def _run_parallel(problems: dict[str, str], lean_dir: Path,
 
 def main():
     parser = argparse.ArgumentParser(description="Run openprover on Putnam problems")
-    parser.add_argument("repo_path", type=Path, help="Path to cloned PutnamBench repository")
+    parser.add_argument("--repo-path", type=Path, default=Path("./PutnamBench"),
+                        help="Path to cloned PutnamBench repository (default: ./PutnamBench)")
     parser.add_argument("--problem", help="Specific problem name to run (e.g., putnam_1962_a1)")
     parser.add_argument("--limit", type=int, help="Limit number of problems to run")
     parser.add_argument("--problem-parallelism", type=int, default=1,
@@ -150,7 +151,7 @@ def main():
                         help="Server URL for local models (default: http://localhost:8000)")
     parser.add_argument("--max-steps", type=int, default=50)
     parser.add_argument("--autonomous", action="store_true")
-    parser.add_argument("--no-lean", action="store_true",
+    parser.add_argument("--informal", action="store_true",
                         help="Skip Lean setup/verification; run openprover without formal checking")
     parser.add_argument("--isolation", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -159,7 +160,7 @@ def main():
     repo_path = args.repo_path.resolve()
     lean_dir = repo_path / "lean4"
 
-    if not args.no_lean:
+    if not args.informal:
         lake_dir = lean_dir / ".lake"
         if not lake_dir.is_dir():
             print(f"Error: {lake_dir} not found.", file=sys.stderr)
@@ -216,7 +217,7 @@ def main():
         if args.worker_model:
             cmd.extend(["--worker-model", args.worker_model])
 
-        if not args.no_lean:
+        if not args.informal:
             lean_theorem_path = lean_dir / "src" / f"{problem_name}.lean"
             if lean_theorem_path.is_file():
                 cmd.extend(["--lean-project", str(lean_dir)])

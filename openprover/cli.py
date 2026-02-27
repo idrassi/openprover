@@ -39,6 +39,8 @@ def main():
                         help="Path to THEOREM.lean file (requires --lean-project-dir)")
     parser.add_argument("--proof", type=Path, metavar="FILE",
                         help="Path to existing PROOF.md (formalize-only mode, requires --lean-theorem)")
+    parser.add_argument("--lean-items", action=argparse.BooleanOptionalAction, default=None,
+                        help="Allow saving .lean items to the repo (auto-enabled with --lean-project-dir)")
     parser.add_argument("--repl-dir", type=Path, metavar="DIR",
                         help="Path to lean-repl directory (reserved for future use)")
 
@@ -58,6 +60,12 @@ def main():
         parser.error(f"--lean-theorem not found: {args.lean_theorem}")
     if args.proof and not args.proof.is_file():
         parser.error(f"--proof not found: {args.proof}")
+
+    # Resolve --lean-items default
+    if args.lean_items is None:
+        args.lean_items = args.lean_project_dir is not None
+    if args.lean_items and not args.lean_project_dir:
+        parser.error("--lean-items requires --lean-project-dir (verification needs a Lean project)")
 
     # Resolve effective planner/worker models
     planner_model = args.planner_model or args.model
@@ -114,6 +122,7 @@ def main():
         lean_theorem_path=args.lean_theorem,
         proof_path=args.proof,
         make_worker_llm=make_worker_llm,
+        lean_items=args.lean_items,
     )
 
     # Check if this is a finished run → inspect mode

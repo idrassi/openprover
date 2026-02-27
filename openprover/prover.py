@@ -23,24 +23,57 @@ def slugify(text: str) -> str:
 
 
 class Repo:
-    """Manages the repo/ directory of markdown items."""
+    """Manages the repo/ directory of markdown and lean items."""
 
     def __init__(self, repo_dir: Path):
         self.dir = repo_dir
         self.dir.mkdir(exist_ok=True)
 
+    def _resolve_path(self, slug: str) -> Path | None:
+        """Find existing item file (.lean preferred over .md)."""
+        lean = self.dir / f"{slug}.lean"
+        if lean.exists():
+            return lean
+        md = self.dir / f"{slug}.md"
+        if md.exists():
+            return md
+        return None
+
+    @staticmethod
+    def _extract_summary(path: Path) -> str:
+        """Extract summary line from a repo item file."""
+        text = path.read_text()
+        if path.suffix == ".lean":
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if stripped.startswith("-- "):
+                    return stripped[3:].removeprefix("Summary:").strip()
+                if stripped and not stripped.startswith("--"):
+                    break
+            return "(no summary)"
+        first_line = text.split("\n", 1)[0]
+        return first_line.removeprefix("Summary:").strip()
+
     def list_summaries(self) -> str:
         """Return index: '- [[slug]]: summary' for each item."""
         entries = []
-        for f in sorted(self.dir.glob("*.md")):
-            first_line = f.read_text().split("\n", 1)[0]
-            summary = first_line.removeprefix("Summary:").strip()
-            entries.append(f"- [[{f.stem}]]: {summary}")
+        files = sorted(
+            list(self.dir.glob("*.md")) + list(self.dir.glob("*.lean")),
+            key=lambda f: f.stem,
+        )
+        seen = set()
+        for f in files:
+            if f.stem in seen:
+                continue
+            seen.add(f.stem)
+            summary = self._extract_summary(f)
+            tag = " (lean)" if f.suffix == ".lean" else ""
+            entries.append(f"- [[{f.stem}]]{tag}: {summary}")
         return "\n".join(entries)
 
     def read_item(self, slug: str) -> str | None:
-        path = self.dir / f"{slug}.md"
-        return path.read_text() if path.exists() else None
+        path = self._resolve_path(slug)
+        return path.read_text() if path else None
 
     def read_items(self, slugs: list[str]) -> str:
         """Read multiple items, return formatted for prev_output."""
@@ -53,12 +86,16 @@ class Repo:
                 parts.append(f"## [[{slug}]]\n\n(not found)")
         return "\n\n".join(parts)
 
-    def write_item(self, slug: str, content: str | None):
+    def write_item(self, slug: str, content: str | None, fmt: str = "markdown"):
         """Create/update item, or delete if content is None/empty."""
-        path = self.dir / f"{slug}.md"
+        ext = ".lean" if fmt == "lean" else ".md"
+        path = self.dir / f"{slug}{ext}"
         if not content:
-            path.unlink(missing_ok=True)
+            (self.dir / f"{slug}.md").unlink(missing_ok=True)
+            (self.dir / f"{slug}.lean").unlink(missing_ok=True)
         else:
+            other_ext = ".md" if fmt == "lean" else ".lean"
+            (self.dir / f"{slug}{other_ext}").unlink(missing_ok=True)
             path.write_text(content)
 
     def resolve_wikilinks(self, text: str) -> str:
@@ -103,10 +140,12 @@ class Prover:
                  lean_project_dir: Path | None = None,
                  lean_theorem_path: Path | None = None,
                  proof_path: Path | None = None,
-                 make_worker_llm=None):
+                 make_worker_llm=None,
+                 lean_items: bool = False):
         self.model = model_name
         self._make_llm = make_llm
         self._make_worker_llm = make_worker_llm or make_llm
+        self.lean_items = lean_items
         self.max_steps = max_steps
         self.autonomous = autonomous
         self.verbose = verbose
@@ -320,6 +359,7 @@ class Prover:
             lean_mode=self.mode,
             num_sorries=self.lean_theorem.num_sorries if self.lean_theorem else 0,
             step_num=self.step_num,
+            lean_items=self.lean_items,
         )
         plan = None
         parse_error = ""
@@ -552,15 +592,19 @@ class Prover:
             content = item.get("content")
             fmt = item.get("format", "markdown")
 
-            self.repo.write_item(slug, content)
+            if fmt == "lean" and not self.lean_items:
+                self.tui.log(f"[[{slug}]]: lean items not enabled", color="red")
+                lean_feedback.append(
+                    f"[[{slug}]]: Rejected — lean items are not enabled. "
+                    f"Use --lean-items to enable."
+                )
+                continue
 
             if fmt == "lean" and content and self.lean_work_dir:
-                # Write lean file and auto-verify
                 path = self.lean_work_dir.make_file(slug, content)
                 self.tui.log(f"Verifying [[{slug}]]...", dim=True)
                 success, feedback = run_lean_check(path, self.lean_project_dir)
 
-                # Archive lean I/O
                 lean_dir = step_dir / "lean"
                 lean_dir.mkdir(exist_ok=True)
                 (lean_dir / f"item_{lean_idx}_{slug}.lean").write_text(content)
@@ -569,18 +613,23 @@ class Prover:
                 lean_idx += 1
 
                 if success:
+                    self.repo.write_item(slug, content, fmt="lean")
                     self.tui.log(f"Wrote [[{slug}]] (lean, verified OK)", color="green")
                     logger.info("Lean item [[%s]] verified OK", slug)
                     lean_feedback.append(f"[[{slug}]]: Lean verification PASSED")
                 else:
-                    self.tui.log(f"Wrote [[{slug}]] (lean, errors)", color="yellow")
-                    logger.info("Lean item [[%s]] failed verification", slug)
+                    self.tui.log(f"[[{slug}]] lean verification failed — not saved",
+                                 color="yellow")
+                    logger.info("Lean item [[%s]] failed verification — not saved", slug)
                     lean_feedback.append(
-                        f"[[{slug}]]: Lean verification FAILED\n```\n{feedback}\n```"
+                        f"[[{slug}]]: Lean verification FAILED — item was NOT saved "
+                        f"to the repo.\n```\n{feedback}\n```"
                     )
             elif not content:
+                self.repo.write_item(slug, content)
                 self.tui.log(f"Deleted [[{slug}]]", color="yellow")
             else:
+                self.repo.write_item(slug, content)
                 first_line = content.split("\n", 1)[0]
                 self.tui.log(f"Wrote [[{slug}]]: {first_line}", color="green")
 
@@ -1044,6 +1093,7 @@ class Prover:
                 prompt=prompt,
                 system_prompt=prompts.planner_system_prompt(
                     isolation=self.isolation, lean_mode=self.mode,
+                    lean_items=self.lean_items,
                 ),
                 label="discussion",
                 stream_callback=self._stream_cb("planner"),

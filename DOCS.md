@@ -7,7 +7,7 @@ OpenProver uses a **planner-worker** architecture. A single planner LLM coordina
 ```
 cli.py          Parse args, setup TUI, run prover, print cost
 prover.py       Planner loop, step dispatch, action handlers, Repo
-llm.py          LLMClient (Claude CLI), HFClient (HuggingFace HTTP)
+llm.py          LLMClient (Claude CLI), HFClient (OpenAI-compatible HTTP)
 prompts.py      All prompt templates, TOML parser, actions enum
 lean.py         Lean 4 integration: parsing, assembly, verification
 tui.py          Full-screen terminal UI with tabs, streaming, key handling
@@ -112,8 +112,8 @@ Web search: When `web_search=True`, replaces `--tools ""` with `--permission-mod
 
 Archiving: Every call saved to `archive/calls/call_NNN.json` with full prompt, system prompt, schema, response, cost, timing, and errors.
 
-**`HFClient`** (HuggingFace-compatible HTTP):
-- Calls an OpenAI-compatible API at `--hf-url`
+**`HFClient`** (OpenAI-compatible HTTP, for vLLM / serve_hf.py):
+- Calls an OpenAI-compatible API at `--provider-url`
 - Health check on init (`/health` endpoint)
 - Streaming via chunked transfer encoding
 - Same interface as `LLMClient` (web_search and json_schema ignored)
@@ -227,7 +227,7 @@ runs/<slug>-<timestamp>/
 - **`submit_lean_proof`**: The planner provides N replacement blocks (one per `sorry` in THEOREM.lean) plus optional context. The system assembles the complete file, verifies it, and writes PROOF.lean on success. On failure, compiler errors are fed back.
 - **`read_theorem`**: Returns THEOREM.md, THEOREM.lean, and PROOF.md (if provided) content so the planner can reference the formal statement.
 
-Generated Lean files are placed in `<lean-project-dir>/OpenProver-<random_id>/` with `{slug}-{random_suffix}.lean` names to avoid collisions. No `import` statements are allowed in injected code (enforced at assembly time).
+Generated Lean files are placed in `<lean-project>/OpenProver-<random_id>/` with `{slug}-{random_suffix}.lean` names to avoid collisions. No `import` statements are allowed in injected code (enforced at assembly time).
 
 ## Wikilinks
 

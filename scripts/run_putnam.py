@@ -49,13 +49,13 @@ def _run_problem(problem_name: str, statement: str, lean_dir: Path,
         cmd.extend(["--worker-model", args.worker_model])
 
     if lean_theorem_path.is_file():
-        cmd.extend(["--lean-project-dir", str(lean_dir)])
+        cmd.extend(["--lean-project", str(lean_dir)])
         cmd.extend(["--lean-theorem", str(lean_theorem_path)])
 
     hf_models = {"qed-nano", "qwen3-4b"}
     used_models = {args.model, args.planner_model, args.worker_model} - {None}
     if used_models & hf_models:
-        cmd.extend(["--hf-url", args.hf_url])
+        cmd.extend(["--provider-url", args.provider_url])
     if args.isolation:
         cmd.append("--isolation")
 
@@ -146,8 +146,8 @@ def main():
                         help="Override model for planner (defaults to --model)")
     parser.add_argument("--worker-model", choices=model_choices, default=None,
                         help="Override model for worker (defaults to --model)")
-    parser.add_argument("--hf-url", default="http://localhost:8000",
-                        help="HF server URL for local models (default: http://localhost:8000)")
+    parser.add_argument("--provider-url", default="http://localhost:8000",
+                        help="Server URL for local models (default: http://localhost:8000)")
     parser.add_argument("--max-steps", type=int, default=50)
     parser.add_argument("--autonomous", action="store_true")
     parser.add_argument("--isolation", action="store_true")
@@ -216,7 +216,7 @@ def main():
             cmd.extend(["--worker-model", args.worker_model])
 
         if lean_theorem_path.is_file():
-            cmd.extend(["--lean-project-dir", str(lean_dir)])
+            cmd.extend(["--lean-project", str(lean_dir)])
             cmd.extend(["--lean-theorem", str(lean_theorem_path)])
         else:
             print(f"Warning: Lean theorem not found at {lean_theorem_path}."
@@ -225,7 +225,7 @@ def main():
         hf_models = {"qed-nano", "qwen3-4b"}
         used_models = {args.model, args.planner_model, args.worker_model} - {None}
         if used_models & hf_models:
-            cmd.extend(["--hf-url", args.hf_url])
+            cmd.extend(["--provider-url", args.provider_url])
         if args.autonomous:
             cmd.append("--autonomous")
         if args.isolation:

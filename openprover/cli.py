@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--model", default="sonnet", choices=model_choices, help="Model to use for both planner and worker (default: sonnet)")
     parser.add_argument("--planner-model", choices=model_choices, default=None, help="Override model for planner (defaults to --model)")
     parser.add_argument("--worker-model", choices=model_choices, default=None, help="Override model for worker (defaults to --model)")
-    parser.add_argument("--hf-url", default="http://localhost:8000", help="HF server URL for local models (default: http://localhost:8000)")
+    parser.add_argument("--provider-url", default="http://localhost:8000", help="Server URL for local models (default: http://localhost:8000)")
     parser.add_argument("--max-steps", type=int, default=50, help="Maximum number of proving steps (default: 50)")
     parser.add_argument("--autonomous", action="store_true", help="Start in autonomous mode (default: interactive)")
     parser.add_argument("--run-dir", help="Working directory (resumes if it contains an existing run)")
@@ -33,14 +33,14 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     # Lean verification
-    parser.add_argument("--lean-project-dir", type=Path, metavar="DIR",
+    parser.add_argument("--lean-project", type=Path, metavar="DIR",
                         help="Path to Lean project with lakefile (enables formal verification)")
     parser.add_argument("--lean-theorem", type=Path, metavar="FILE",
-                        help="Path to THEOREM.lean file (requires --lean-project-dir)")
+                        help="Path to THEOREM.lean file (requires --lean-project)")
     parser.add_argument("--proof", type=Path, metavar="FILE",
                         help="Path to existing PROOF.md (formalize-only mode, requires --lean-theorem)")
     parser.add_argument("--lean-items", action=argparse.BooleanOptionalAction, default=None,
-                        help="Allow saving .lean items to the repo (auto-enabled with --lean-project-dir)")
+                        help="Allow saving .lean items to the repo (auto-enabled with --lean-project)")
     parser.add_argument("--repl-dir", type=Path, metavar="DIR",
                         help="Path to lean-repl directory (reserved for future use)")
 
@@ -50,12 +50,12 @@ def main():
         parser.error("theorem is required (or use --run-dir to resume an existing run)")
 
     # Lean validation
-    if args.lean_theorem and not args.lean_project_dir:
-        parser.error("--lean-theorem requires --lean-project-dir")
+    if args.lean_theorem and not args.lean_project:
+        parser.error("--lean-theorem requires --lean-project")
     if args.proof and not args.lean_theorem:
         parser.error("--proof requires --lean-theorem (formalize-only mode needs a Lean theorem)")
-    if args.lean_project_dir and not args.lean_project_dir.is_dir():
-        parser.error(f"--lean-project-dir not found: {args.lean_project_dir}")
+    if args.lean_project and not args.lean_project.is_dir():
+        parser.error(f"--lean-project not found: {args.lean_project}")
     if args.lean_theorem and not args.lean_theorem.is_file():
         parser.error(f"--lean-theorem not found: {args.lean_theorem}")
     if args.proof and not args.proof.is_file():
@@ -63,9 +63,9 @@ def main():
 
     # Resolve --lean-items default
     if args.lean_items is None:
-        args.lean_items = args.lean_project_dir is not None
-    if args.lean_items and not args.lean_project_dir:
-        parser.error("--lean-items requires --lean-project-dir (verification needs a Lean project)")
+        args.lean_items = args.lean_project is not None
+    if args.lean_items and not args.lean_project:
+        parser.error("--lean-items requires --lean-project (verification needs a Lean project)")
 
     # Resolve effective planner/worker models
     planner_model = args.planner_model or args.model
@@ -94,7 +94,7 @@ def main():
     def _make_client(model_alias, archive_dir):
         if model_alias in HF_MODEL_MAP:
             return HFClient(HF_MODEL_MAP[model_alias], archive_dir,
-                            base_url=args.hf_url, answer_reserve=args.answer_reserve,
+                            base_url=args.provider_url, answer_reserve=args.answer_reserve,
                             vllm=model_alias in VLLM_MODELS)
         return LLMClient(model_alias, archive_dir)
 
@@ -118,7 +118,7 @@ def main():
         run_dir=args.run_dir,
         parallelism=args.parallelism,
         give_up_ratio=args.give_up_after,
-        lean_project_dir=args.lean_project_dir,
+        lean_project_dir=args.lean_project,
         lean_theorem_path=args.lean_theorem,
         proof_path=args.proof,
         make_worker_llm=make_worker_llm,

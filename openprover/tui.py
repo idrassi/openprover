@@ -93,7 +93,7 @@ class _Tab:
                  "streaming", "spinner_label", "spinner_tick", "spinner_time",
                  "spinner_start", "spinner_tokens", "last_trace", "last_output",
                  "toml_pending", "toml_close_tag", "output_non_toml_seen",
-                 "output_toml_seen",
+                 "output_toml_seen", "is_waiting",
                  "done", "task_description")
 
     def __init__(self, tab_id: str, label: str, task_description: str = ""):
@@ -115,6 +115,7 @@ class _Tab:
         self.toml_close_tag = ""
         self.output_non_toml_seen = False
         self.output_toml_seen = False
+        self.is_waiting = False
         self.done = False
         self.task_description = task_description
 
@@ -181,6 +182,12 @@ class TUI:
             if tab.id == tab_id:
                 return tab
         return self.tabs[0]
+
+    def _find_tab_or_none(self, tab_id: str) -> _Tab | None:
+        for tab in self.tabs:
+            if tab.id == tab_id:
+                return tab
+        return None
 
     def setup(self, theorem_name: str, work_dir: str,
               step_num: int = 0, max_steps: int = 50,
@@ -321,8 +328,8 @@ class TUI:
                 name = name[:17] + "..."
             if tab.done:
                 name += " ✓"
-            elif tab.streaming:
-                name += " …"
+            elif self._tab_shows_spinner(tab):
+                name += f" {SPINNER[tab.spinner_tick]}"
             bracket = f"[{name}]"
             visible_len += len(bracket) + 1
             if i == self.active_tab_idx:
@@ -370,6 +377,7 @@ class TUI:
             if tab.id == tab_id:
                 tab.done = True
                 tab.streaming = False
+                tab.is_waiting = False
                 break
         self._redraw_header()
 
@@ -387,6 +395,7 @@ class TUI:
         if text:
             planner.spinner_label = text
             planner.streaming = True
+            planner.is_waiting = True
             planner.spinner_start = time.monotonic()
             planner.spinner_time = 0.0
             planner.spinner_tick = 0
@@ -396,9 +405,11 @@ class TUI:
                 self._write(f'  {DIM}{ch} {text} {self._spinner_status(0, 0)}{RESET}')
         else:
             planner.streaming = False
+            planner.is_waiting = False
             planner.spinner_label = ""
             if planner is self._active_tab and self.view == "main":
                 self._write('\r\033[2K')
+        self._redraw_header()
 
     def worker_output(self, tab_id: str, text: str):
         """Display worker result in its tab as regular (always-visible) content."""
@@ -600,10 +611,6 @@ class TUI:
     def _update_spinner(self):
         tab = self._active_tab
         now = time.monotonic()
-        if now - tab.spinner_time < 0.08:
-            return
-        tab.spinner_time = now
-        tab.spinner_tick = (tab.spinner_tick + 1) % len(SPINNER)
         if self.view == "main":
             ch = SPINNER[tab.spinner_tick]
             elapsed = int(now - tab.spinner_start)
@@ -618,7 +625,9 @@ class TUI:
     # ── Streaming ───────────────────────────────────────────────
 
     def stream_start(self, label: str = "thinking", tab: str = "planner"):
-        target = self._find_tab(tab)
+        target = self._find_tab_or_none(tab)
+        if target is None:
+            return
         target.trace_buf = []
         target.output_buf = []
         target.toml_pending = ""
@@ -626,17 +635,28 @@ class TUI:
         target.output_non_toml_seen = False
         target.output_toml_seen = False
         target.streaming = True
+        target.is_waiting = False
+        target.done = False
         target.spinner_label = label
         target.spinner_tick = 0
         target.spinner_tokens = 0
         target.spinner_time = time.monotonic()
         target.spinner_start = target.spinner_time
+        self._redraw_header()
         if target is self._active_tab and self.view == "main":
             self._write(f'  {DIM}{SPINNER[0]} {label} {self._spinner_status(0, 0)}{RESET}')
 
     def stream_text(self, text: str, kind: str = "text", tab: str = "planner"):
         self._check_keys()
-        target = self._find_tab(tab)
+        target = self._find_tab_or_none(tab)
+        if target is None:
+            return
+        # Ignore stale chunks that arrive after a stream has ended.
+        if not target.streaming:
+            return
+        # Planner should never emit model chunks while just waiting for workers.
+        if target.id == "planner" and target.is_waiting:
+            return
         target.spinner_tokens += 1
         is_active = target is self._active_tab
         at_bottom = target.scroll_offset == 0
@@ -702,8 +722,11 @@ class TUI:
                         self._write(seg)
 
     def stream_end(self, tab: str = "planner"):
-        target = self._find_tab(tab)
+        target = self._find_tab_or_none(tab)
+        if target is None:
+            return
         target.streaming = False
+        target.is_waiting = False
         target.spinner_label = ""
 
         if target.trace_buf:
@@ -735,6 +758,7 @@ class TUI:
                 self._write('\n')
             else:
                 self._write('\r\033[2K')
+        self._redraw_header()
 
     # ── Background thread (key reader + spinner) ────────────────
 
@@ -742,6 +766,7 @@ class TUI:
         fd = sys.stdin.fileno()
         while not self._bg_stop:
             try:
+                self._advance_tab_spinners()
                 tab = self._active_tab
                 if tab.spinner_label and tab.streaming:
                     self._update_spinner()
@@ -830,6 +855,24 @@ class TUI:
                     i += 1
             except (OSError, ValueError):
                 break
+
+    @staticmethod
+    def _tab_shows_spinner(tab: _Tab) -> bool:
+        return tab.streaming and not (tab.id == "planner" and tab.is_waiting)
+
+    def _advance_tab_spinners(self):
+        now = time.monotonic()
+        updated = False
+        for tab in self.tabs:
+            if not self._tab_shows_spinner(tab):
+                continue
+            if now - tab.spinner_time < 0.08:
+                continue
+            tab.spinner_time = now
+            tab.spinner_tick = (tab.spinner_tick + 1) % len(SPINNER)
+            updated = True
+        if updated:
+            self._redraw_header()
 
     def _can_handle_directly(self) -> bool:
         return self._active_tab.streaming and not self._confirming

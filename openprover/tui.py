@@ -31,7 +31,6 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 ACTION_STYLE = {
     "spawn": BLUE,
     "literature_search": MAGENTA,
-    "human_feedback": YELLOW,
     "read_items": CYAN,
     "write_items": CYAN,
     "read_theorem": CYAN,
@@ -136,7 +135,7 @@ class TUI:
         self._key_queue: queue.Queue[str] = queue.Queue()
         self._bg_thread: threading.Thread | None = None
         self._bg_stop = False
-        # Step history — each entry: {action, summary, step_num, detail, trace, worker_tabs}
+        # Step history includes action/summary/detail plus status flags/feedback.
         self.step_entries: list[dict] = []
         self._nav_step = -1  # -1 = options focused, 0..N-1 = step index
         self._step_detail_text = ""
@@ -487,29 +486,90 @@ class TUI:
                 for line in context.strip().splitlines()[1:]:
                     self._tab_log(planner, f'          {line}')
 
-    def step_complete(self, step_num: int, max_steps: int,
-                      action: str, summary: str, detail: str = ""):
-        planner = self.tabs[0]
+    def _format_step_line(self, entry: dict) -> str:
+        action = entry.get("action", "")
+        summary = entry.get("summary", "")
         color = ACTION_STYLE.get(action, "")
         line = f'{color}■{RESET} {BOLD}{action}{RESET} {DIM}—{RESET} {summary}'
+        labels: list[str] = []
+        if entry.get("rejected"):
+            labels.append(f"{YELLOW}[rejected]{RESET}")
+        if entry.get("interrupted"):
+            labels.append(f"{YELLOW}[interrupted]{RESET}")
+        feedback = (entry.get("feedback") or "").strip()
+        if feedback:
+            labels.append(f"{YELLOW}[feedback]{RESET} {feedback}")
+        if labels:
+            line += f' {DIM}·{RESET} ' + f' {DIM}·{RESET} '.join(labels)
+        return line
+
+    def _sync_step_log_line(self, step_idx: int):
+        if not (0 <= step_idx < len(self.step_entries)):
+            return
+        line = self._format_step_line(self.step_entries[step_idx])
+        planner = self.tabs[0]
+        for log_entry in planner.log_lines:
+            if log_entry.step_idx == step_idx:
+                log_entry.text = line
+                break
+
+    def step_complete(self, step_num: int, max_steps: int,
+                      action: str, summary: str, detail: str = "",
+                      rejected: bool = False, interrupted: bool = False,
+                      feedback: str = "") -> int:
+        planner = self.tabs[0]
         trace = planner.last_trace
         output = planner.last_output
         planner.last_trace = ""
         planner.last_output = ""
         idx = len(self.step_entries)
+        entry = {
+            "action": action,
+            "summary": summary,
+            "step_num": step_num,
+            "detail": detail,
+            "trace": trace,
+            "output": output,
+            "rejected": rejected,
+            "interrupted": interrupted,
+            "feedback": feedback.strip(),
+        }
+        line = self._format_step_line(entry)
         self._tab_log(planner, line, step_idx=idx)
-        self.step_entries.append({
-            "action": action, "summary": summary,
-            "step_num": step_num, "detail": detail,
-            "trace": trace, "output": output,
-        })
+        self.step_entries.append(entry)
         self.update_step(step_num, max_steps)
         if self.view == "main":
             self._redraw()
+        return idx
 
     def update_step_detail(self, step_idx: int, detail: str):
         if 0 <= step_idx < len(self.step_entries):
             self.step_entries[step_idx]["detail"] = detail
+
+    def update_step_status(
+            self,
+            step_idx: int,
+            *,
+            rejected: bool | None = None,
+            interrupted: bool | None = None,
+            feedback: str | None = None,
+            detail_append: str = "",
+    ):
+        if not (0 <= step_idx < len(self.step_entries)):
+            return
+        entry = self.step_entries[step_idx]
+        if rejected is not None:
+            entry["rejected"] = rejected
+        if interrupted is not None:
+            entry["interrupted"] = interrupted
+        if feedback is not None:
+            entry["feedback"] = feedback.strip()
+        if detail_append:
+            base = entry.get("detail", "")
+            entry["detail"] = f"{base}\n\n{detail_append}".strip() if base else detail_append
+        self._sync_step_log_line(step_idx)
+        if self.view == "main":
+            self._redraw()
 
     # ── Spinner ─────────────────────────────────────────────────
 
@@ -821,6 +881,19 @@ class TUI:
             f" — {entry['summary']}"
         )
         parts = []
+        status_bits = []
+        if entry.get("rejected"):
+            status_bits.append("rejected")
+        if entry.get("interrupted"):
+            status_bits.append("interrupted")
+        if status_bits:
+            parts.append(f"Status: {', '.join(status_bits)}")
+            parts.append("")
+        feedback = (entry.get("feedback") or "").strip()
+        if feedback:
+            parts.append("Human feedback:")
+            parts.append(feedback)
+            parts.append("")
         trace = entry.get("trace", "")
         if trace and self.trace_visible:
             parts.append(trace.rstrip())
@@ -1651,13 +1724,27 @@ class HeadlessTUI:
         pass
 
     def step_complete(self, step_num: int, max_steps: int,
-                      action: str, summary: str, detail: str = ""):
-        print(f"[step {step_num}/{max_steps}] {action} — {summary}",
+                      action: str, summary: str, detail: str = "",
+                      rejected: bool = False, interrupted: bool = False,
+                      feedback: str = "") -> int:
+        suffix = []
+        if rejected:
+            suffix.append("rejected")
+        if interrupted:
+            suffix.append("interrupted")
+        if feedback.strip():
+            suffix.append(f"feedback: {feedback.strip()}")
+        tail = f" [{' | '.join(suffix)}]" if suffix else ""
+        print(f"[step {step_num}/{max_steps}] {action} — {summary}{tail}",
               flush=True)
+        idx = len(self.step_entries)
         self.step_entries.append({
             "action": action, "summary": summary,
             "step_num": step_num, "detail": detail,
+            "rejected": rejected, "interrupted": interrupted,
+            "feedback": feedback.strip(),
         })
+        return idx
 
     def update_step(self, step_num: int, max_steps: int):
         pass
@@ -1665,6 +1752,28 @@ class HeadlessTUI:
     def update_step_detail(self, step_idx: int, detail: str):
         if 0 <= step_idx < len(self.step_entries):
             self.step_entries[step_idx]["detail"] = detail
+
+    def update_step_status(
+            self,
+            step_idx: int,
+            *,
+            rejected: bool | None = None,
+            interrupted: bool | None = None,
+            feedback: str | None = None,
+            detail_append: str = "",
+    ):
+        if not (0 <= step_idx < len(self.step_entries)):
+            return
+        entry = self.step_entries[step_idx]
+        if rejected is not None:
+            entry["rejected"] = rejected
+        if interrupted is not None:
+            entry["interrupted"] = interrupted
+        if feedback is not None:
+            entry["feedback"] = feedback.strip()
+        if detail_append:
+            base = entry.get("detail", "")
+            entry["detail"] = f"{base}\n\n{detail_append}".strip() if base else detail_append
 
     def show_proposal(self, plan: dict):
         pass

@@ -295,41 +295,6 @@ class Prover:
             if len(self.prev_outputs) > 3:
                 self.prev_outputs = self.prev_outputs[-3:]
 
-    def _record_human_feedback(
-        self,
-        feedback: str,
-        step_num: int | None = None,
-        rejected_action: str = "",
-        rejected_summary: str = "",
-    ):
-        text = feedback.strip()
-        if not text:
-            return
-        first_line = text.splitlines()[0]
-        feedback_short = first_line if len(first_line) <= 60 else f"{first_line[:57]}..."
-        proposed = ""
-        if rejected_action or rejected_summary:
-            proposed = f"{rejected_action} — {rejected_summary}".strip(" —")
-            if len(proposed) > 80:
-                proposed = f"{proposed[:77]}..."
-        if proposed:
-            summary = f"rejected with feedback: {proposed}"
-            detail = (
-                f"Proposed step:\n{proposed}\n\n"
-                f"Feedback:\n{text}"
-            )
-        else:
-            summary = f"feedback: {feedback_short}"
-            detail = text
-        num = self.step_num if step_num is None else step_num
-        self.tui.step_complete(
-            num,
-            self.max_steps,
-            "human_feedback",
-            summary,
-            detail=detail,
-        )
-
     def _apply_whiteboard_from_plan(self, plan: dict):
         """Apply planner whiteboard update if provided."""
         if plan.get("whiteboard"):
@@ -564,7 +529,9 @@ class Prover:
                 self.shutting_down = True
                 return "stop"
             # Feedback
-            self._record_human_feedback(user_resp, step_num=self.step_num + 1)
+            text = user_resp.strip()
+            if text:
+                self.tui.log(f"Feedback: {text}", color="yellow")
             self._push_output(f"Human feedback: {user_resp}")
             self.tui.log("Feedback noted — will replan next step", color="yellow")
             return "continue"
@@ -809,17 +776,34 @@ class Prover:
                     self.tui.log("  autonomous mode", dim=True)
                     break
                 # Feedback — set as prev_output and retry next step
-                self._record_human_feedback(
-                    user_resp,
-                    rejected_action=plan.get("action", ""),
-                    rejected_summary=plan.get("summary", ""),
+                text = user_resp.strip()
+                detail = (
+                    f"Proposed step:\n"
+                    f"{plan.get('action', '')} — {plan.get('summary', '')}".strip(" —")
+                )
+                self.tui.step_complete(
+                    self.step_num,
+                    self.max_steps,
+                    plan.get("action", ""),
+                    plan.get("summary", ""),
+                    detail=detail,
+                    rejected=True,
+                    feedback=text,
+                )
+                self._save_step_meta(
+                    step_dir,
+                    status="rejected",
+                    action=plan.get("action", ""),
+                    resp=planner_resp,
+                    error="Rejected by user feedback",
+                    feedback=text,
                 )
                 self._push_output(f"Human feedback: {user_resp}")
                 self.tui.log("Feedback noted — will replan next step", color="yellow")
                 return "continue"
 
         self._apply_whiteboard_from_plan(plan)
-        self.tui.step_complete(
+        step_idx = self.tui.step_complete(
             self.step_num,
             self.max_steps,
             plan.get("action", ""),
@@ -886,6 +870,11 @@ class Prover:
         if any_interrupted:
             self.planner_llm.clear_interrupt()
             self.worker_llm.clear_interrupt()
+            self.tui.update_step_status(
+                step_idx,
+                interrupted=True,
+                detail_append="Execution interrupted before all workers completed.",
+            )
             if self.autonomous:
                 self.autonomous = False
                 self.tui.autonomous = False
@@ -903,8 +892,9 @@ class Prover:
         self._push_output("\n\n".join(parts))
 
         # Save step metadata with worker details
+        status = "interrupted" if any_interrupted else "ok"
         self._save_step_meta(
-            step_dir, status="ok", action="spawn", resp=planner_resp,
+            step_dir, status=status, action="spawn", resp=planner_resp,
             workers=[w for w in worker_resps if w],
         )
 
@@ -947,17 +937,34 @@ class Prover:
                     self.tui.log("  autonomous mode", dim=True)
                     break
                 # Feedback — set as prev_output and retry next step
-                self._record_human_feedback(
-                    user_resp,
-                    rejected_action=plan.get("action", ""),
-                    rejected_summary=plan.get("summary", ""),
+                text = user_resp.strip()
+                detail = (
+                    f"Proposed step:\n"
+                    f"{plan.get('action', '')} — {plan.get('summary', '')}".strip(" —")
+                )
+                self.tui.step_complete(
+                    self.step_num,
+                    self.max_steps,
+                    plan.get("action", ""),
+                    plan.get("summary", ""),
+                    detail=detail,
+                    rejected=True,
+                    feedback=text,
+                )
+                self._save_step_meta(
+                    step_dir,
+                    status="rejected",
+                    action=plan.get("action", ""),
+                    resp=planner_resp,
+                    error="Rejected by user feedback",
+                    feedback=text,
                 )
                 self._push_output(f"Human feedback: {user_resp}")
                 self.tui.log("Feedback noted — will replan next step", color="yellow")
                 return "continue"
 
         self._apply_whiteboard_from_plan(plan)
-        self.tui.step_complete(
+        step_idx = self.tui.step_complete(
             self.step_num,
             self.max_steps,
             plan.get("action", ""),
@@ -999,6 +1006,11 @@ class Prover:
         except Interrupted:
             self.tui.stream_end(tab=wid)
             self.worker_llm.clear_interrupt()
+            self.tui.update_step_status(
+                step_idx,
+                interrupted=True,
+                detail_append="Execution interrupted before literature search completed.",
+            )
             if self.autonomous:
                 self.autonomous = False
                 self.tui.autonomous = False
@@ -1017,8 +1029,11 @@ class Prover:
         self.tui.set_waiting_status("")
         self.tui.worker_output(wid, f"Result:\n\n{result}")
 
+        status = "ok"
+        if search_resp and search_resp.get("error") == "interrupted":
+            status = "interrupted"
         self._save_step_meta(
-            step_dir, status="ok", action="literature_search",
+            step_dir, status=status, action="literature_search",
             resp=planner_resp, workers=[search_resp] if search_resp else None,
         )
 
@@ -1111,6 +1126,7 @@ class Prover:
                         action: str = "",
                         resp: dict | None = None,
                         error: str = "",
+                        feedback: str = "",
                         workers: list[dict] | None = None):
         """Write step_meta.toml with structured metadata for the step."""
         lines = [
@@ -1122,6 +1138,8 @@ class Prover:
 
         if error:
             lines.append(f'error = """\n{error}\n"""')
+        if feedback:
+            lines.append(f'feedback = """\n{feedback}\n"""')
 
         # Planner call metadata
         if resp:
@@ -1260,9 +1278,28 @@ class Prover:
             step_num = int(step_dir.name.removeprefix("step_"))
             action = plan.get("action", "")
             summary = plan.get("summary", "")
+            meta = self._read_step_meta(step_dir)
 
             # Log step in planner tab
-            self.tui.step_complete(step_num, self.max_steps, action, summary)
+            step_idx = self.tui.step_complete(step_num, self.max_steps, action, summary)
+            status = meta.get("status", "")
+            feedback = meta.get("feedback", "")
+            detail = ""
+            if status == "rejected":
+                detail = f"Proposed step:\n{action} — {summary}".strip(" —")
+                self.tui.update_step_status(
+                    step_idx,
+                    rejected=True,
+                    feedback=feedback,
+                    detail_append=detail,
+                )
+            elif status == "interrupted":
+                self.tui.update_step_status(
+                    step_idx,
+                    interrupted=True,
+                    feedback=feedback,
+                    detail_append="Execution was interrupted.",
+                )
 
             # Load worker tabs for spawn/search steps
             workers_dir = step_dir / "workers"
@@ -1294,6 +1331,31 @@ class Prover:
             self.tui.snapshot_worker_tabs(step_num)
             if idx < len(step_dirs) - 1:
                 self.tui.clear_worker_tabs()
+
+    @staticmethod
+    def _read_step_meta(step_dir: Path) -> dict[str, str]:
+        meta_path = step_dir / "step_meta.toml"
+        if not meta_path.exists():
+            return {}
+        text = meta_path.read_text()
+        data: dict[str, str] = {}
+
+        def extract_single(key: str) -> str:
+            m = re.search(rf'^{key}\s*=\s*"([^"]*)"', text, flags=re.MULTILINE)
+            return m.group(1) if m else ""
+
+        def extract_block(key: str) -> str:
+            m = re.search(
+                rf'^{key}\s*=\s*"""\n(.*?)\n"""',
+                text,
+                flags=re.MULTILINE | re.DOTALL,
+            )
+            return m.group(1).strip() if m else ""
+
+        data["status"] = extract_single("status")
+        data["feedback"] = extract_block("feedback")
+        data["error"] = extract_block("error")
+        return data
 
     def request_interrupt(self):
         """Called by SIGINT handler. Kills active LLM call or nudges TUI."""

@@ -1863,8 +1863,35 @@ class TUI:
             elif self.view == "whiteboard":
                 self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}(esc to return){RESET}\n')
                 self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
-                for wline in self.whiteboard.splitlines():
-                    self._write_raw(f'  {wline}\n')
+                sections: list[str] = []
+                current_title = "Notes"
+                current_lines: list[str] = []
+
+                def flush_whiteboard_section():
+                    if not current_lines:
+                        return
+                    if sections:
+                        sections.append(f'  {DIM}{"─" * 40}{RESET}')
+                        sections.append("")
+                    sections.append(f"  {CYAN}{BOLD}{current_title}{RESET}")
+                    for line in current_lines:
+                        sections.append(f"  {line}" if line else "")
+
+                source_lines = self.whiteboard.splitlines() or ["(whiteboard is empty)"]
+                for wline in source_lines:
+                    stripped = wline.strip()
+                    if stripped.startswith("## "):
+                        flush_whiteboard_section()
+                        current_title = stripped[3:].strip() or "Notes"
+                        current_lines = []
+                        continue
+                    current_lines.append(wline)
+                flush_whiteboard_section()
+                if not sections:
+                    sections.append("  (whiteboard is empty)")
+
+                for iline in sections:
+                    self._write_raw(f'{iline}\n')
             elif self.view == "input":
                 tab = self._active_tab
                 self._write_raw(f'  {BOLD}Worker Input{RESET} {DIM}(esc to return){RESET}\n')

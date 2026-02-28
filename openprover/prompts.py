@@ -45,7 +45,7 @@ def _build_actions(*, lean_mode: str, has_lean: bool,
             actions += (
                 "- **submit_proof**: Submit an informal proof (writes PROOF.md). "
                 "The session ends when both PROOF.md and PROOF.lean are written. "
-                "Can be re-submitted to refine, but only submit once you are confident the proof is correct.\n"
+                "Can be re-submitted to refine, but only submit after at least one independent worker has verified the proof.\n"
             )
         else:
             actions += (
@@ -94,6 +94,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
             "- Both an informal proof (PROOF.md) and a formal Lean 4 proof (PROOF.lean) are required. "
             "The session ends only when both are written.\n"
             "- After you have a proof in English, use read_theorem to see the formal theorem statement in Lean.\n"
+            "- Before calling submit_proof, run at least one independent verification worker that checks the full informal proof end-to-end.\n"
             "- Use submit_lean_proof for the formal proof. Use submit_proof for the informal proof.\n"
         )
     elif lean_mode == "formalize_only":
@@ -220,7 +221,7 @@ def _build_submit_proof_section(*, lean_mode: str, has_lean: bool) -> str:
             "## submit_proof\n"
             "\n"
             "Only use submit_proof when you have a COMPLETE, RIGOROUS proof. "
-            "Have it independently verified by a worker first. "
+            "Have it independently verified at least once by a worker first. "
             "You can re-submit to refine the proof if needed.\n"
         )
     return (

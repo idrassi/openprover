@@ -243,6 +243,13 @@ class LLMClient:
                           None, stderr, elapsed_ms, archive_path)
             raise RuntimeError(f"No result from streaming call: {stderr[:500]}")
 
+        subtype = result_data.get("subtype", "")
+        if result_data.get("is_error") or "error" in subtype:
+            err = result_data.get("result", "") or subtype or "streaming error"
+            self._archive(call_num, label, prompt, system_prompt, json_schema,
+                          result_data, err, elapsed_ms, archive_path)
+            raise RuntimeError(f"Claude CLI streaming error: {err[:500]}")
+
         cost = result_data.get("total_cost_usd", 0.0)
         self.total_cost += cost
         if json_schema and "structured_output" in result_data:

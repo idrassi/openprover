@@ -23,6 +23,24 @@ class StreamingUnavailable(RuntimeError):
     pass
 
 
+def _extract_vllm_reasoning(delta: dict) -> str:
+    """Extract reasoning text across vLLM/OpenAI-compatible variants."""
+    return (
+        delta.get("reasoning_content")
+        or delta.get("reasoning")
+        or ""
+    )
+
+
+def _extract_sse_data_str(line: str) -> str | None:
+    """Return SSE payload for data lines, else None."""
+    if not line:
+        return None
+    if not line.startswith("data:"):
+        return None
+    return line[len("data:"):].lstrip()
+
+
 def _split_think_tags(text: str) -> tuple[str, str]:
     """Split thinking from model output at </think> boundary.
 
@@ -326,6 +344,10 @@ class HFClient:
         self.max_context_length = MODEL_CONTEXT_LENGTHS[model]
         self.max_output_tokens = self.max_context_length
         self.answer_reserve = answer_reserve
+        # For vLLM/OpenAI-compatible servers, keep default completion budget
+        # conservative; requesting the full context as max_tokens often causes
+        # HTTP 400 when prompt tokens are nonzero.
+        self.vllm_default_max_tokens = answer_reserve
         self.max_thinking_tokens = max(
             self.max_context_length - answer_reserve,
             self.max_context_length // 2,
@@ -384,7 +406,7 @@ class HFClient:
             {"role": "user", "content": prompt},
         ]
         effective_max_tokens = max_tokens if max_tokens is not None else (
-            self.max_thinking_tokens + self.answer_reserve if self.vllm
+            self.vllm_default_max_tokens if self.vllm
             else self.max_output_tokens
         )
         if self.vllm:
@@ -469,7 +491,7 @@ class HFClient:
                 raise Interrupted()
             self._archive(call_num, label, prompt, system_prompt, json_schema,
                           None, f"HTTP {e.code}: {body}", elapsed_ms, archive_path)
-            raise
+            raise RuntimeError(f"HTTP {e.code}: {body[:1000]}")
         elapsed_ms = int((time.time() - start) * 1000)
 
         if self._interrupted.is_set():
@@ -480,7 +502,7 @@ class HFClient:
         choice = raw["choices"][0]
         msg = choice["message"]
         finish_reason = choice.get("finish_reason", "stop")
-        reasoning = msg.get("reasoning_content") or ""
+        reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
         full_text = msg.get("content", "")
         if reasoning:
             result_text, thinking_text = full_text, reasoning
@@ -525,7 +547,7 @@ class HFClient:
                 )
             self._archive(call_num, label, prompt, system_prompt, json_schema,
                           None, f"HTTP {e.code}: {body}", elapsed_ms, archive_path)
-            raise
+            raise RuntimeError(f"HTTP {e.code}: {body[:1000]}")
 
         thinking_parts: list[str] = []
         output_parts: list[str] = []
@@ -540,9 +562,9 @@ class HFClient:
                 resp.close()
                 break
             line = raw_line.decode().strip()
-            if not line or not line.startswith("data: "):
+            data_str = _extract_sse_data_str(line)
+            if data_str is None:
                 continue
-            data_str = line[6:]
             if data_str == "[DONE]":
                 break
             try:
@@ -557,7 +579,7 @@ class HFClient:
 
             if self.vllm:
                 # vLLM with --reasoning-parser separates thinking/content
-                reasoning = delta.get("reasoning_content", "")
+                reasoning = _extract_vllm_reasoning(delta)
                 content = delta.get("content", "")
                 if reasoning:
                     callback(reasoning, "thinking")
@@ -658,7 +680,7 @@ class HFClient:
         call_num = self.call_count
 
         effective_max_tokens = max_tokens if max_tokens is not None else (
-            self.max_thinking_tokens + self.answer_reserve
+            self.vllm_default_max_tokens
         )
 
         payload = {
@@ -723,13 +745,13 @@ class HFClient:
                 raise Interrupted()
             self._archive(call_num, label, prompt_text, "", None,
                           None, f"HTTP {e.code}: {body}", elapsed_ms, archive_path)
-            raise
+            raise RuntimeError(f"HTTP {e.code}: {body[:1000]}")
         elapsed_ms = int((time.time() - start) * 1000)
 
         choice = raw["choices"][0]
         msg = choice["message"]
         finish_reason = choice.get("finish_reason", "stop")
-        reasoning = msg.get("reasoning_content") or ""
+        reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
         content = msg.get("content") or ""
         tool_calls = msg.get("tool_calls")
 
@@ -767,7 +789,7 @@ class HFClient:
                 raise Interrupted()
             self._archive(call_num, label, prompt_text, "", None,
                           None, f"HTTP {e.code}: {body}", elapsed_ms, archive_path)
-            raise
+            raise RuntimeError(f"HTTP {e.code}: {body[:1000]}")
 
         thinking_parts: list[str] = []
         output_parts: list[str] = []
@@ -781,9 +803,9 @@ class HFClient:
                 resp.close()
                 break
             line = raw_line.decode().strip()
-            if not line or not line.startswith("data: "):
+            data_str = _extract_sse_data_str(line)
+            if data_str is None:
                 continue
-            data_str = line[6:]
             if data_str == "[DONE]":
                 break
             try:
@@ -798,7 +820,7 @@ class HFClient:
             delta = choice.get("delta", {})
 
             # Reasoning content
-            reasoning = delta.get("reasoning_content", "")
+            reasoning = _extract_vllm_reasoning(delta)
             if reasoning:
                 callback(reasoning, "thinking")
                 thinking_parts.append(reasoning)

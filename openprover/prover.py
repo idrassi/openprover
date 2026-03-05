@@ -1405,9 +1405,11 @@ class Prover:
         raw = resp.get("raw") or {}
         # Claude CLI puts usage at top level; HF may have it in usage
         usage = raw.get("usage", {})
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
         return {
-            "input_tokens": usage.get("input_tokens", 0),
-            "output_tokens": usage.get("output_tokens", 0),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "cache_creation_tokens": usage.get("cache_creation_input_tokens", 0),
             "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         }

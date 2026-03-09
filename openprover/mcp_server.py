@@ -52,6 +52,19 @@ def _get_work_dir() -> LeanWorkDir:
     return _work_dir
 
 
+_has_gpu: bool | None = None
+
+def _gpu_available() -> bool:
+    global _has_gpu
+    if _has_gpu is None:
+        try:
+            import torch
+            _has_gpu = torch.cuda.is_available()
+        except Exception:
+            _has_gpu = False
+    return _has_gpu
+
+
 def _get_search_service():
     global _search_service
     if _search_service is None:
@@ -86,7 +99,8 @@ def lean_search(query: str) -> str:
         return f"Error initializing search: {e}"
 
     try:
-        results = asyncio.run(service.search(query, limit=10, rerank_top=0))
+        rerank = 25 if _gpu_available() else 0
+        results = asyncio.run(service.search(query, limit=10, rerank_top=rerank))
         if not results:
             return "No results found"
         parts = []

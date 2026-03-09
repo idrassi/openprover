@@ -102,13 +102,23 @@ def fetch_lean_data() -> bool:
         print(f"Error: {e}")
         return False
 
-    # Pre-download embedding model so first search doesn't hit the network
+    # Pre-download models so first search doesn't hit the network
     print("Pre-downloading embedding model (Qwen3-Embedding-0.6B)...")
     try:
         from sentence_transformers import SentenceTransformer
         SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
     except Exception as e:
         print(f"Warning: failed to pre-download embedding model: {e}")
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            print("GPU detected — pre-downloading reranker model (Qwen3-Reranker-0.6B)...")
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            AutoTokenizer.from_pretrained("Qwen/Qwen3-Reranker-0.6B")
+            AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-Reranker-0.6B")
+    except Exception as e:
+        print(f"Warning: failed to pre-download reranker model: {e}")
 
     print("Lean Explore data ready.")
     return True

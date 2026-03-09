@@ -1396,15 +1396,17 @@ class Prover:
     def _tool_lean_search(self, args: dict, worker_id: str) -> tuple[str, str]:
         """Search Mathlib declarations."""
         import asyncio
+        import torch
         query = args.get("query", "")
         if not query:
             return ("No query provided", "error")
         if not self.lean_explore_service:
             return ("lean_search not available (lean_explore not installed)", "error")
 
+        rerank = 25 if torch.cuda.is_available() else 0
         try:
             results = asyncio.run(
-                self.lean_explore_service.search(query, limit=10, rerank_top=0)
+                self.lean_explore_service.search(query, limit=10, rerank_top=rerank)
             )
             if not results:
                 return ("No results found", "ok")

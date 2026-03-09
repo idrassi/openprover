@@ -134,7 +134,7 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         "[[items]]\n"
         f'slug = "another-item"\n'
         "# omit content to delete\n"
-        f"{_TOML_CLOSE_TAG}\n"
+        f"{_TOML_CLOSE_TAG}\n\n"
         f"**spawn**: one or more `[[tasks]]` sections with `description = {_TQ}...{_TQ}`\n"
     )
     if not isolation:

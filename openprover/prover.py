@@ -1404,7 +1404,7 @@ class Prover:
 
         try:
             results = asyncio.run(
-                self.lean_explore_service.search(query, limit=10)
+                self.lean_explore_service.search(query, limit=10, rerank_top=0)
             )
             if not results:
                 return ("No results found", "ok")

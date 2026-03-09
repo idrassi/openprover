@@ -86,7 +86,7 @@ def lean_search(query: str) -> str:
         return f"Error initializing search: {e}"
 
     try:
-        results = asyncio.run(service.search(query, limit=10))
+        results = asyncio.run(service.search(query, limit=10, rerank_top=0))
         if not results:
             return "No results found"
         parts = []

@@ -92,10 +92,7 @@ def fetch_lean_data() -> bool:
             [str(lean_explore_bin), "data", "fetch"],
             check=True,
         )
-        if is_lean_data_available():
-            print("Lean Explore data ready.")
-            return True
-        else:
+        if not is_lean_data_available():
             print("Warning: fetch completed but data files not found.")
             return False
     except subprocess.CalledProcessError as e:
@@ -104,3 +101,14 @@ def fetch_lean_data() -> bool:
     except Exception as e:
         print(f"Error: {e}")
         return False
+
+    # Pre-download embedding model so first search doesn't hit the network
+    print("Pre-downloading embedding model (Qwen3-Embedding-0.6B)...")
+    try:
+        from sentence_transformers import SentenceTransformer
+        SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
+    except Exception as e:
+        print(f"Warning: failed to pre-download embedding model: {e}")
+
+    print("Lean Explore data ready.")
+    return True

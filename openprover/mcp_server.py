@@ -56,7 +56,7 @@ def _get_search_service():
     global _search_service
     if _search_service is None:
         from lean_explore.search import SearchEngine, Service
-        engine = SearchEngine(use_local_data=False)
+        engine = SearchEngine(use_local_data=True)
         _search_service = Service(engine=engine)
     return _search_service
 

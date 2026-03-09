@@ -309,7 +309,7 @@ class Prover:
                 # vLLM: initialize LeanExplore for in-process tool execution
                 try:
                     from lean_explore.search import SearchEngine, Service
-                    engine = SearchEngine(use_local_data=False)
+                    engine = SearchEngine(use_local_data=True)
                     self.lean_explore_service = Service(engine=engine)
                     logger.info("LeanExplore service initialized")
                 except ImportError:

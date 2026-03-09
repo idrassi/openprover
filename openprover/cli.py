@@ -10,7 +10,7 @@ from .llm import LLMClient, HFClient
 from .prover import Prover
 from .tui import TUI, HeadlessTUI
 
-SUBCOMMANDS = {"inspect"}
+SUBCOMMANDS = {"inspect", "fetch-lean-data"}
 
 
 def main():
@@ -18,8 +18,15 @@ def main():
         cmd = sys.argv[1]
         if cmd == "inspect":
             return _cmd_inspect()
+        if cmd == "fetch-lean-data":
+            return _cmd_fetch_lean_data()
 
     return _cmd_prove()
+
+
+def _cmd_fetch_lean_data():
+    from .lean_data import fetch_lean_data
+    fetch_lean_data()
 
 
 def _cmd_inspect():
@@ -126,6 +133,11 @@ def _cmd_prove():
             parser.error("--lean-worker-actions requires --lean-project")
         if worker_model not in TOOL_CAPABLE_MODELS:
             parser.error("--lean-worker-actions requires a tool-capable worker model (sonnet, opus, or minimax-m2.5)")
+        # Auto-fetch Lean Explore data if not available
+        from .lean_data import is_lean_data_available, fetch_lean_data
+        if not is_lean_data_available():
+            if not fetch_lean_data():
+                print("Warning: lean_search will not be available")
 
     def _make_client(model_alias, archive_dir):
         if model_alias in HF_MODEL_MAP:

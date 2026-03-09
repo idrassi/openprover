@@ -1,5 +1,6 @@
 """Terminal UI for OpenProver — ANSI scroll regions, fixed header, tabs."""
 
+import atexit
 import os
 import queue
 import re
@@ -223,6 +224,9 @@ class TUI:
         self._write(f'\033[{self._content_start};1H\033[?25l')
         self._active = True
 
+        # Ensure cursor and terminal are restored even on abnormal exit
+        atexit.register(self.cleanup)
+
         self._old_sigwinch = signal.getsignal(signal.SIGWINCH)
         signal.signal(signal.SIGWINCH, self._on_resize)
 
@@ -418,14 +422,16 @@ class TUI:
             if planner is self._active_tab and self.view == "main":
                 ch = SPINNER[0]
                 with self._write_lock:
-                    self._write(f'  {DIM}{ch} {text} {self._spinner_status(0, 0)}{RESET}')
+                    self._write_raw(f'  {DIM}{ch} {text} {self._spinner_status(0, 0)}{RESET}')
+                    sys.stdout.flush()
         else:
             planner.streaming = False
             planner.is_waiting = False
             planner.spinner_label = ""
             if planner is self._active_tab and self.view == "main":
                 with self._write_lock:
-                    self._write('\r\033[2K')
+                    self._write_raw('\r\033[2K')
+                    sys.stdout.flush()
         self._redraw_header()
 
     def worker_output(self, tab_id: str, text: str):
@@ -1285,8 +1291,10 @@ class TUI:
                         and ch in ('s', 'p', 'q')):
                     return ch
 
-                if (ch == 'a' and self._nav_step == -1
-                        and self._confirm_selected == 0):
+                if ch == 'a' and self._confirm_selected == 0:
+                    if self._nav_step >= 0:
+                        self._nav_step = -1
+                        self._restore_worker_tabs()
                     self.autonomous = True
                     self._redraw()
                     return "a"

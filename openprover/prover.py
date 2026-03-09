@@ -851,7 +851,8 @@ class Prover:
         # Limit to parallelism
         tasks = tasks[:self.parallelism]
 
-        # Interactive confirmation
+        # Interactive confirmation (re-sync in case user toggled during streaming)
+        self.autonomous = self.tui.autonomous
         if not self.autonomous:
             self.tui.show_proposal(plan)
             while True:
@@ -1011,7 +1012,8 @@ class Prover:
                                  resp=planner_resp, error="No query specified")
             return "continue"
 
-        # Interactive confirmation
+        # Interactive confirmation (re-sync in case user toggled during streaming)
+        self.autonomous = self.tui.autonomous
         if not self.autonomous:
             self.tui.show_proposal(plan)
             while True:

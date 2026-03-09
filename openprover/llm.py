@@ -231,11 +231,13 @@ class LLMClient:
         thinking_parts = []
         interrupted = False
         # Tool event tracking for MCP calls
+        # Claude CLI streams tool_use as content blocks, then emits the
+        # tool result as a top-level {"type": "user"} message.
+        _in_tool_use = False
+        _cur_tool_id = ""
         _cur_tool_name = ""
         _cur_tool_input_parts: list[str] = []
-        _cur_tool_result_parts: list[str] = []
-        _in_tool_use = False
-        _in_tool_result = False
+        _pending_tools: dict[str, dict] = {}  # tool_use_id -> {name, input}
         # Use readline() instead of iterator — the iterator uses an internal
         # read-ahead buffer that defeats real-time streaming.
         try:
@@ -255,7 +257,9 @@ class LLMClient:
                 except json.JSONDecodeError:
                     continue
 
-                if msg.get("type") == "stream_event":
+                msg_type = msg.get("type", "")
+
+                if msg_type == "stream_event":
                     event = msg.get("event", {})
                     etype = event.get("type", "")
 
@@ -263,11 +267,9 @@ class LLMClient:
                         cb = event.get("content_block", {})
                         if cb.get("type") == "tool_use":
                             _in_tool_use = True
+                            _cur_tool_id = cb.get("id", "")
                             _cur_tool_name = cb.get("name", "")
                             _cur_tool_input_parts = []
-                        elif cb.get("type") == "tool_result":
-                            _in_tool_result = True
-                            _cur_tool_result_parts = []
 
                     elif etype == "content_block_delta":
                         delta = event.get("delta", {})
@@ -275,9 +277,6 @@ class LLMClient:
                         if dtype == "input_json_delta" and _in_tool_use:
                             _cur_tool_input_parts.append(
                                 delta.get("partial_json", ""))
-                        elif dtype == "content_block_delta" and _in_tool_result:
-                            _cur_tool_result_parts.append(
-                                delta.get("text", ""))
                         else:
                             thinking = delta.get("thinking", "")
                             text = delta.get("text", "")
@@ -290,22 +289,60 @@ class LLMClient:
                     elif etype == "content_block_stop":
                         if _in_tool_use:
                             _in_tool_use = False
-                        elif _in_tool_result and tool_callback and _cur_tool_name:
-                            # Tool cycle complete — report to callback
                             try:
                                 tool_input = json.loads(
                                     "".join(_cur_tool_input_parts))
                             except (json.JSONDecodeError, ValueError):
                                 tool_input = {"raw": "".join(
                                     _cur_tool_input_parts)}
-                            tool_result = "".join(_cur_tool_result_parts)
-                            status = "ok"  # best-effort
-                            tool_callback(_cur_tool_name, tool_input,
-                                          tool_result, status)
-                            _cur_tool_name = ""
-                            _in_tool_result = False
+                            _pending_tools[_cur_tool_id] = {
+                                "name": _cur_tool_name,
+                                "input": tool_input,
+                            }
 
-                elif msg.get("type") == "result":
+                # Claude CLI emits tool results as {"type": "user"} messages
+                elif msg_type == "user" and tool_callback:
+                    # Extract tool_result from user message content
+                    content = msg.get("message", {}).get("content", [])
+                    if isinstance(content, list):
+                        for item in content:
+                            if not isinstance(item, dict):
+                                continue
+                            if item.get("type") != "tool_result":
+                                continue
+                            tid = item.get("tool_use_id", "")
+                            tc = _pending_tools.pop(tid, None)
+                            if not tc:
+                                continue
+                            # Strip MCP prefix (mcp__server__tool → tool)
+                            name = tc["name"]
+                            if name.startswith("mcp__"):
+                                parts = name.split("__", 2)
+                                name = parts[-1] if len(parts) == 3 else name
+                            # Extract result text
+                            raw_content = item.get("content", "")
+                            try:
+                                parsed = json.loads(raw_content)
+                                result_text = str(parsed.get(
+                                    "result", raw_content))
+                            except (json.JSONDecodeError, ValueError,
+                                    AttributeError):
+                                result_text = raw_content
+                            is_error = item.get("is_error", False)
+                            # Infer status for lean tools
+                            if is_error:
+                                status = "error"
+                            elif name == "lean_verify":
+                                status = ("ok" if result_text
+                                          .startswith("OK") else "error")
+                            elif result_text.startswith("Error"):
+                                status = "error"
+                            else:
+                                status = "ok"
+                            tool_callback(
+                                name, tc["input"], result_text, status)
+
+                elif msg_type == "result":
                     result_data = msg
         finally:
             with self._procs_lock:

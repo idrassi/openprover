@@ -1,6 +1,7 @@
 """CLI entry point for OpenProver."""
 
 import argparse
+import atexit
 import signal
 import sys
 from pathlib import Path
@@ -182,6 +183,20 @@ def _cmd_prove():
             tui.cleanup()
             print(f"  {prover.work_dir}")
         return
+
+    # Ensure LLM subprocesses (and their MCP servers) are killed on exit
+    def _cleanup_llm_procs():
+        prover.planner_llm.cleanup()
+        prover.worker_llm.cleanup()
+
+    atexit.register(_cleanup_llm_procs)
+
+    # SIGTERM: clean up and exit (default SIGTERM would skip atexit)
+    def handle_sigterm(signum, frame):
+        _cleanup_llm_procs()
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     # Signal handling: ctrl+c interrupts the active LLM call
     def handle_sigint(signum, frame):

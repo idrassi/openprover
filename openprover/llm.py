@@ -81,6 +81,13 @@ class LLMClient:
     def interrupt(self):
         """Signal all active LLM calls to stop."""
         self._interrupted.set()
+        self._kill_active_procs()
+
+    def cleanup(self):
+        """Kill all active subprocesses. Safe to call multiple times."""
+        self._kill_active_procs()
+
+    def _kill_active_procs(self):
         with self._procs_lock:
             for proc in self._active_procs:
                 if proc.poll() is None:
@@ -160,22 +167,31 @@ class LLMClient:
                 tool_callback=tool_callback,
             )
 
-        proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True,
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
         )
+        with self._procs_lock:
+            self._active_procs.append(proc)
+        try:
+            stdout, stderr = proc.communicate(input=prompt)
+        finally:
+            with self._procs_lock:
+                if proc in self._active_procs:
+                    self._active_procs.remove(proc)
         elapsed_ms = int((time.time() - start) * 1000)
 
         if proc.returncode != 0:
             self._archive(call_num, label, prompt, system_prompt, json_schema,
-                          None, proc.stderr, elapsed_ms, archive_path)
-            raise RuntimeError(f"Claude CLI failed (exit {proc.returncode}): {proc.stderr[:500]}")
+                          None, stderr, elapsed_ms, archive_path)
+            raise RuntimeError(f"Claude CLI failed (exit {proc.returncode}): {stderr[:500]}")
 
         try:
-            raw = json.loads(proc.stdout)
+            raw = json.loads(stdout)
         except json.JSONDecodeError:
             self._archive(call_num, label, prompt, system_prompt, json_schema,
-                          None, proc.stdout[:1000], elapsed_ms, archive_path)
-            raise RuntimeError(f"Failed to parse Claude response as JSON: {proc.stdout[:500]}")
+                          None, stdout[:1000], elapsed_ms, archive_path)
+            raise RuntimeError(f"Failed to parse Claude response as JSON: {stdout[:500]}")
 
         cost = raw.get("total_cost_usd", 0.0)
         self.total_cost += cost

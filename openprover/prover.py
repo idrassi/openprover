@@ -1119,7 +1119,6 @@ class Prover:
             search_resp = {"result": result, "cost": 0.0, "duration_ms": 0,
                            "raw": {}, "error": str(e)}
         self.tui.set_waiting_status("")
-        self.tui.worker_output(wid, f"Result:\n\n{result}")
 
         status = "ok"
         if search_resp and search_resp.get("error") == "interrupted":
@@ -1203,7 +1202,6 @@ class Prover:
                 self.tui.stream_end(tab=worker_id)
                 resp = {"result": f"Worker error: {e}", "cost": 0.0,
                         "duration_ms": 0, "raw": {}, "error": str(e)}
-            self.tui.worker_output(worker_id, resp["result"])
             return resp
 
         # Multi-turn tool-calling path (vLLM)
@@ -1319,7 +1317,6 @@ class Prover:
             result = {"result": f"Worker error: {e}", "cost": total_cost,
                       "duration_ms": total_duration, "raw": {}, "error": str(e)}
 
-        self.tui.worker_output(worker_id, result["result"])
         return result
 
     def _execute_worker_tool(self, name: str, args: dict, worker_id: str) -> tuple[str, str]:

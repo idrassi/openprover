@@ -176,14 +176,16 @@ class _TUILogHandler(logging.Handler):
 
 
 class Prover:
-    def __init__(self, theorem_path: str | None, make_llm, model_name: str,
+    def __init__(self, work_dir: Path, theorem_text: str, mode: str,
+                 make_llm, model_name: str,
                  max_steps: int,
                  autonomous: bool, verbose: bool, tui: TUI,
-                 isolation: bool = False, run_dir: str | None = None,
+                 isolation: bool = False,
                  parallelism: int = 1, give_up_ratio: float = 0.5,
                  lean_project_dir: Path | None = None,
-                 lean_theorem_path: Path | None = None,
-                 proof_path: Path | None = None,
+                 lean_theorem_text: str = "",
+                 proof_md_text: str = "",
+                 resumed: bool = False,
                  make_worker_llm=None,
                  lean_items: bool = False,
                  lean_worker_actions: bool = False):
@@ -203,64 +205,39 @@ class Prover:
         self.step_num = 0
         self.prev_outputs: list[str] = []  # rolling window of last 3 outputs
         self.proof_text = ""
-        self.resumed = False
+        self.resumed = resumed
 
         # Lean configuration
         self.lean_project_dir = lean_project_dir
         self.lean_theorem: LeanTheorem | None = None
-        self.lean_theorem_text: str = ""
+        self.lean_theorem_text = lean_theorem_text
         self.lean_work_dir: LeanWorkDir | None = None
-        self.proof_md_text: str = ""
+        self.proof_md_text = proof_md_text
+        self.mode = mode
 
-        if lean_theorem_path:
-            self.lean_theorem_text = lean_theorem_path.read_text()
-            self.lean_theorem = LeanTheorem(self.lean_theorem_text)
-            self.lean_work_dir = LeanWorkDir(lean_project_dir)
-        if proof_path:
-            self.proof_md_text = proof_path.read_text()
+        if lean_theorem_text:
+            self.lean_theorem = LeanTheorem(lean_theorem_text)
+            if lean_project_dir:
+                self.lean_work_dir = LeanWorkDir(lean_project_dir)
 
-        # Operating mode
-        if lean_theorem_path and proof_path:
-            self.mode = "formalize_only"
-        elif lean_theorem_path:
-            self.mode = "prove_and_formalize"
-        else:
-            self.mode = "prove"
-
-        # Set up working directory
-        if run_dir:
-            self.work_dir = Path(run_dir)
-        else:
-            theorem_text = Path(theorem_path).read_text()
-            first_line = theorem_text.strip().split("\n")[0][:40]
-            slug = slugify(first_line) or "theorem"
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            self.work_dir = Path("runs") / f"{slug}-{timestamp}"
-
+        # Working directory (already created by CLI)
+        self.work_dir = work_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
         (self.work_dir / "steps").mkdir(exist_ok=True)
 
         # Repo
         self.repo = Repo(self.work_dir / "repo")
+        self.theorem_text = theorem_text
 
-        # Check for resume
-        whiteboard_path = self.work_dir / "WHITEBOARD.md"
-        theorem_file = self.work_dir / "THEOREM.md"
-        if whiteboard_path.exists() and theorem_file.exists():
-            self.whiteboard = whiteboard_path.read_text()
-            self.theorem_text = theorem_file.read_text()
+        # Resume: count existing steps
+        if self.resumed:
+            self.whiteboard = (self.work_dir / "WHITEBOARD.md").read_text()
             steps_dir = self.work_dir / "steps"
             existing = [d for d in steps_dir.iterdir()
                         if d.is_dir() and d.name.startswith("step_")]
             self.step_num = len(existing)
-            self.resumed = True
         else:
-            if not theorem_path:
-                raise SystemExit(
-                    f"Error: no WHITEBOARD.md in {self.work_dir} — "
-                    "provide a theorem file to start a new run"
-                )
-            self.theorem_text = Path(theorem_path).read_text()
+            # Fresh run — write initial files
             (self.work_dir / "THEOREM.md").write_text(self.theorem_text)
             if self.lean_theorem_text:
                 (self.work_dir / "THEOREM.lean").write_text(self.lean_theorem_text)
@@ -269,7 +246,7 @@ class Prover:
             self.whiteboard = prompts.format_initial_whiteboard(
                 self.theorem_text, mode=self.mode,
             )
-            whiteboard_path.write_text(self.whiteboard)
+            (self.work_dir / "WHITEBOARD.md").write_text(self.whiteboard)
 
         # Logging
         self._setup_logging()

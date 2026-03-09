@@ -4,11 +4,12 @@ import argparse
 import atexit
 import signal
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from openprover import __version__
 from .llm import LLMClient, HFClient
-from .prover import Prover
+from .prover import Prover, slugify
 from .tui import TUI, HeadlessTUI
 
 SUBCOMMANDS = {"inspect", "fetch-lean-data"}
@@ -42,20 +43,135 @@ def _cmd_inspect():
     inspect_main(args.run_dir)
 
 
+def _resolve_inputs(parser, args):
+    """Resolve theorem/lean-theorem/proof from flags and run_dir files.
+
+    Returns (work_dir, theorem_text, lean_theorem_text, proof_md_text, mode,
+             resumed, read_only).
+    """
+    run_dir = Path(args.run_dir) if args.run_dir else None
+    input_flags = args.theorem or args.lean_theorem or args.proof
+    read_only = args.read_only
+
+    # Check existing state in run_dir
+    has_whiteboard = run_dir and (run_dir / "WHITEBOARD.md").exists()
+    has_theorem_file = run_dir and (run_dir / "THEOREM.md").exists()
+    has_lean_theorem_file = run_dir and (run_dir / "THEOREM.lean").exists()
+    has_proof_file = run_dir and (run_dir / "PROOF.md").exists()
+
+    # Determine if this is a finished or in-progress run
+    resuming = bool(has_whiteboard)
+
+    if resuming and input_flags:
+        parser.error(
+            "cannot use --theorem/--lean-theorem/--proof when resuming an existing run"
+        )
+
+    if resuming:
+        # Read everything from run_dir
+        theorem_text = (run_dir / "THEOREM.md").read_text()
+        lean_theorem_text = (run_dir / "THEOREM.lean").read_text() if has_lean_theorem_file else ""
+        proof_md_text = (run_dir / "PROOF.md").read_text() if has_proof_file else ""
+    else:
+        # Fresh start — resolve each input, checking for conflicts
+
+        # Theorem
+        if args.theorem and has_theorem_file:
+            parser.error(
+                f"both --theorem and {run_dir}/THEOREM.md exist — "
+                "remove one to resolve the conflict"
+            )
+        if args.theorem:
+            theorem_path = Path(args.theorem)
+            if not theorem_path.is_file():
+                parser.error(f"--theorem not found: {args.theorem}")
+            theorem_text = theorem_path.read_text()
+        elif has_theorem_file:
+            theorem_text = (run_dir / "THEOREM.md").read_text()
+        else:
+            parser.error(
+                "theorem is required — use --theorem or provide a run dir "
+                "containing THEOREM.md"
+            )
+
+        # Lean theorem
+        if args.lean_theorem and has_lean_theorem_file:
+            parser.error(
+                f"both --lean-theorem and {run_dir}/THEOREM.lean exist — "
+                "remove one to resolve the conflict"
+            )
+        if args.lean_theorem:
+            if not args.lean_theorem.is_file():
+                parser.error(f"--lean-theorem not found: {args.lean_theorem}")
+            lean_theorem_text = args.lean_theorem.read_text()
+        elif has_lean_theorem_file:
+            lean_theorem_text = (run_dir / "THEOREM.lean").read_text()
+        else:
+            lean_theorem_text = ""
+
+        # Proof
+        if args.proof and has_proof_file:
+            parser.error(
+                f"both --proof and {run_dir}/PROOF.md exist — "
+                "remove one to resolve the conflict"
+            )
+        if args.proof:
+            if not args.proof.is_file():
+                parser.error(f"--proof not found: {args.proof}")
+            proof_md_text = args.proof.read_text()
+        elif has_proof_file:
+            proof_md_text = (run_dir / "PROOF.md").read_text()
+        else:
+            proof_md_text = ""
+
+    # Determine mode from available inputs
+    if lean_theorem_text and proof_md_text:
+        mode = "formalize_only"
+    elif lean_theorem_text:
+        mode = "prove_and_formalize"
+    else:
+        mode = "prove"
+
+    # Resolve work_dir (auto-generate if not provided)
+    if run_dir:
+        work_dir = run_dir
+    else:
+        first_line = theorem_text.strip().split("\n")[0][:40]
+        slug = slugify(first_line) or "theorem"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        work_dir = Path("runs") / f"{slug}-{timestamp}"
+
+    return work_dir, theorem_text, lean_theorem_text, proof_md_text, mode, resuming, read_only
+
+
+def _is_finished(work_dir: Path, mode: str) -> bool:
+    """Check if a run is already finished (has discussion or proof)."""
+    has_discussion = (work_dir / "DISCUSSION.md").exists()
+    has_proof_md = (work_dir / "PROOF.md").exists()
+    has_proof_lean = (work_dir / "PROOF.lean").exists()
+    if mode == "formalize_only":
+        return has_proof_lean or has_discussion
+    elif mode == "prove_and_formalize":
+        return (has_proof_md and has_proof_lean) or has_discussion
+    else:
+        return has_proof_md or has_discussion
+
+
 def _cmd_prove():
     parser = argparse.ArgumentParser(
         prog="openprover",
         description="Theorem prover powered by language models",
     )
     model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b", "minimax-m2.5"]
-    parser.add_argument("theorem", nargs="?", help="Path to theorem statement file (.md)")
+    parser.add_argument("run_dir", nargs="?", help="Working directory (resumes if it contains an existing run)")
+    parser.add_argument("--theorem", metavar="FILE", help="Path to theorem statement file (.md)")
     parser.add_argument("--model", default="sonnet", choices=model_choices, help="Model to use for both planner and worker (default: sonnet)")
     parser.add_argument("--planner-model", choices=model_choices, default=None, help="Override model for planner (defaults to --model)")
     parser.add_argument("--worker-model", choices=model_choices, default=None, help="Override model for worker (defaults to --model)")
     parser.add_argument("--provider-url", default="http://localhost:8000", help="Server URL for local models (default: http://localhost:8000)")
     parser.add_argument("--max-steps", type=int, default=50, help="Maximum number of proving steps (default: 50)")
     parser.add_argument("--autonomous", action="store_true", help="Start in autonomous mode (default: interactive)")
-    parser.add_argument("--run-dir", help="Working directory (resumes if it contains an existing run)")
+    parser.add_argument("--read-only", action="store_true", help="Inspect run without resuming")
     parser.add_argument("--isolation", action=argparse.BooleanOptionalAction, default=True, help="Disable web searches (no literature_search action)")
     parser.add_argument("-P", "--parallelism", type=int, default=1, help="Max parallel workers per spawn step (default: 1)")
     parser.add_argument("--give-up-after", type=float, default=0.5, metavar="RATIO", help="Fraction of steps before give_up action is allowed (default: 0.5)")
@@ -80,20 +196,26 @@ def _cmd_prove():
 
     args = parser.parse_args()
 
-    if not args.theorem and not args.run_dir:
-        parser.error("theorem is required (or use --run-dir to resume an existing run)")
+    if not args.run_dir and not args.theorem:
+        parser.error("provide a run directory or --theorem to start a new run")
 
-    # Lean validation
-    if args.lean_theorem and not args.lean_project:
-        parser.error("--lean-theorem requires --lean-project")
-    if args.proof and not args.lean_theorem:
-        parser.error("--proof requires --lean-theorem (formalize-only mode needs a Lean theorem)")
-    if args.lean_project and not args.lean_project.is_dir():
-        parser.error(f"--lean-project not found: {args.lean_project}")
-    if args.lean_theorem and not args.lean_theorem.is_file():
-        parser.error(f"--lean-theorem not found: {args.lean_theorem}")
-    if args.proof and not args.proof.is_file():
-        parser.error(f"--proof not found: {args.proof}")
+    # ── Resolve inputs ──────────────────────────────────────────
+
+    (work_dir, theorem_text, lean_theorem_text, proof_md_text,
+     mode, resuming, read_only) = _resolve_inputs(parser, args)
+
+    # Lean flag validation (for fresh starts with explicit flags)
+    if not resuming:
+        if args.lean_theorem and not args.lean_project:
+            parser.error("--lean-theorem requires --lean-project")
+        if args.proof and not lean_theorem_text:
+            parser.error("--proof requires a Lean theorem (--lean-theorem or THEOREM.lean in run dir)")
+        if args.lean_project and not args.lean_project.is_dir():
+            parser.error(f"--lean-project not found: {args.lean_project}")
+
+    # Finished runs always enter inspect mode
+    finished = resuming and _is_finished(work_dir, mode)
+    inspect_mode = finished or read_only
 
     # Resolve --lean-items default
     if args.lean_items is None:
@@ -156,7 +278,9 @@ def _cmd_prove():
     model_label = planner_model if planner_model == worker_model else f"{planner_model}/{worker_model}"
 
     prover = Prover(
-        theorem_path=args.theorem,
+        work_dir=work_dir,
+        theorem_text=theorem_text,
+        mode=mode,
         make_llm=make_planner_llm,
         model_name=model_label,
         max_steps=args.max_steps,
@@ -164,19 +288,19 @@ def _cmd_prove():
         verbose=args.verbose,
         tui=tui,
         isolation=args.isolation,
-        run_dir=args.run_dir,
         parallelism=args.parallelism,
         give_up_ratio=args.give_up_after,
         lean_project_dir=args.lean_project,
-        lean_theorem_path=args.lean_theorem,
-        proof_path=args.proof,
+        lean_theorem_text=lean_theorem_text,
+        proof_md_text=proof_md_text,
+        resumed=resuming and not inspect_mode,
         make_worker_llm=make_worker_llm,
         lean_items=args.lean_items,
         lean_worker_actions=args.lean_worker_actions,
     )
 
-    # Check if this is a finished run → inspect mode
-    if prover.is_finished and not args.theorem:
+    # Inspect mode: browse history without running steps
+    if inspect_mode:
         try:
             prover.inspect()
         finally:

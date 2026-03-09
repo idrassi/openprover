@@ -36,7 +36,6 @@ ACTION_STYLE = {
     "write_items": CYAN,
     "read_theorem": CYAN,
     "submit_proof": GREEN,
-    "submit_lean_proof": GREEN,
     "give_up": RED,
 }
 
@@ -1063,7 +1062,6 @@ class TUI:
             "write_items": "Writing Notes",
             "read_theorem": "Theorem Analysis",
             "submit_proof": "Submission",
-            "submit_lean_proof": "Lean Submission",
             "give_up": "Termination",
         }.get(action, "Step Details")
 

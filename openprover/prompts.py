@@ -16,7 +16,7 @@ except ModuleNotFoundError:
 ACTIONS = [
     "submit_proof", "give_up", "read_items", "write_items",
     "spawn", "literature_search",
-    "submit_lean_proof", "read_theorem", "write_whiteboard",
+    "read_theorem", "write_whiteboard",
 ]
 ACTIONS_NO_SEARCH = [a for a in ACTIONS if a != "literature_search"]
 
@@ -29,8 +29,7 @@ _TOML_CLOSE_TAG = "</OPENPROVER_ACTION>"
 
 
 def _build_actions(*, lean_mode: str, has_lean: bool,
-                   allow_give_up: bool, isolation: bool,
-                   num_sorries: int) -> str:
+                   allow_give_up: bool, isolation: bool) -> str:
     """Build the actions list section of the system prompt."""
     actions = (
         "- **spawn**: Send tasks to workers (they do the actual math / verification / exploration). Workers are pure reasoning - they only see the context you provide to them.\n"
@@ -43,29 +42,26 @@ def _build_actions(*, lean_mode: str, has_lean: bool,
         actions += "- **read_theorem**: Re-read the original theorem statement.\n"
     actions += "- **write_whiteboard**: Update the whiteboard with new information.\n"
 
-    if lean_mode != "formalize_only":
-        if has_lean:
-            actions += (
-                "- **submit_proof**: Submit an informal proof (writes PROOF.md). "
-                "The session ends when both PROOF.md and PROOF.lean are written. "
-                "Can be re-submitted to refine, but only submit after at least one independent worker has verified the proof.\n"
-            )
-        else:
-            actions += (
-                "- **submit_proof**: Submit the proof (writes PROOF.md). **This terminates the session.** "
-                "The proof must be complete, rigorous, and independently verified by a worker before submission.\n"
-            )
+    if lean_mode == "prove":
+        actions += (
+            "- **submit_proof**: Submit the proof by referencing a repo item slug. **This terminates the session.** "
+            "The proof must be complete, rigorous, and independently verified by a worker before submission.\n"
+        )
+    elif lean_mode == "prove_and_formalize":
+        actions += (
+            "- **submit_proof**: Submit by referencing repo item slugs for both informal and formal proofs. "
+            "The formal proof (Lean 4) is auto-verified. The session ends when both are accepted.\n"
+        )
+    elif lean_mode == "formalize_only":
+        actions += (
+            "- **submit_proof**: Submit the formal Lean 4 proof by referencing a repo item slug. "
+            "Auto-verified with Lean. **If verification succeeds, the session ends.**\n"
+        )
     if allow_give_up:
         actions += "- **give_up**: Declare failure.\n"
     if not isolation:
         actions += (
             "- **literature_search**: Search the web for relevant mathematical literature. Spawns one web-enabled worker.\n"
-        )
-    if has_lean:
-        actions += (
-            f"- **submit_lean_proof**: Submit a formal Lean 4 proof. Provide {num_sorries} replacement block(s) "
-            f"(one per `sorry` in THEOREM.lean), plus optional context. No `import` statements allowed. "
-            f"Auto-verified with Lean. **If verification succeeds, PROOF.lean is written.**\n"
         )
     return actions
 
@@ -81,7 +77,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
         "- Balance exploration and direct proof attempts.\n"
         "- Store failed attempts in the repo - they prevent repeating mistakes.\n"
         "- One focused task per worker. Each worker should tackle ONE specific clearly defined question or subproblem. "
-        "When you need to explore several cases (e.g. case analysis, checking multiple candidate values, verifying separate lemmas), "
+        "When you need to explore several cases (e.g. case analysis, checking multiple candidate values, verifying independent parts of a proof), "
         "spawn one worker per case in parallel rather than giving one worker all cases. "
         "Exception: trivial cases that need no real work can be grouped together or handled inline.\n"
         "- Workers may return partial results (e.g. useful lemmas but incomplete proof). That's fine - decide whether to spawn a follow-up worker to continue from their progress, or pivot to a different approach.\n"
@@ -100,19 +96,22 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
             "They are saved as .lean files in the repo and auto-verified by `lake env lean`. "
             "Items that fail verification are NOT saved.\n"
         )
+    principles += (
+        "- Write proofs as repo items first (via write_items). This lets you refine, verify, and iterate "
+        "on the proof before submitting. When ready, use submit_proof with the item's slug.\n"
+    )
     if lean_mode == "prove_and_formalize":
         principles += (
-            "- Both an informal proof (PROOF.md) and a formal Lean 4 proof (PROOF.lean) are required. "
-            "The session ends only when both are written.\n"
+            "- Both an informal proof and a formal Lean 4 proof are required. "
+            "The session ends only when both are submitted via submit_proof.\n"
             "- After you have a proof in English, use read_theorem to see the formal theorem statement in Lean.\n"
-            "- Before calling submit_proof, run at least one independent verification worker that checks the full informal proof end-to-end.\n"
-            "- Use submit_lean_proof for the formal proof. Use submit_proof for the informal proof.\n"
+            "- Before submitting, run at least one independent verification worker that checks the full informal proof end-to-end.\n"
         )
     elif lean_mode == "formalize_only":
         principles += (
             "- An informal proof (PROOF.md) is already provided. Your only goal is to produce PROOF.lean.\n"
             "- Use read_theorem to view the informal proof and Lean theorem statement.\n"
-            "- Use submit_lean_proof to submit the final formalized proof. The session ends when it succeeds.\n"
+            "- Submit the formal proof via submit_proof with lean_proof_slug. The session ends when verification succeeds.\n"
         )
     elif lean_mode == "prove":
         principles += (
@@ -126,8 +125,18 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
                        num_sorries: int) -> str:
     """Build the TOML fields reference section."""
     fields = ""
-    if lean_mode != "formalize_only":
-        fields += f"**submit_proof**: `proof = {_TQ}...{_TQ}`\n"
+    # submit_proof field docs (mode-dependent)
+    if lean_mode == "prove":
+        fields += '**submit_proof**: `proof_slug = "slug-of-proof-item"`\n'
+    elif lean_mode == "prove_and_formalize":
+        fields += (
+            "**submit_proof**: `proof_slug = \"slug-of-informal-proof\"` and "
+            "`lean_proof_slug = \"slug-of-lean-proof\"` (both required to end session; "
+            "you can submit one at a time)\n"
+        )
+    elif lean_mode == "formalize_only":
+        fields += '**submit_proof**: `lean_proof_slug = "slug-of-lean-proof"`\n'
+
     fields += (
         f'**read_items**: `read = ["slug-1", "slug-2"]`\n'
         "**write_items**: one or more `[[items]]` sections:\n"
@@ -144,6 +153,7 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         f'slug = "another-item"\n'
         "# omit content to delete\n"
         f"{_TOML_CLOSE_TAG}\n\n"
+        "Slugs can contain `/` for subdirectories, e.g. `\"attempts/induction-v1\"`, `\"lemmas/helper\"`.\n\n"
         f"**spawn**: one or more `[[tasks]]` sections with `description = {_TQ}...{_TQ}`\n"
         f"**write_whiteboard**: `whiteboard = {_TQ}...{_TQ}` (complete replacement of current whiteboard)\n"
     )
@@ -173,24 +183,22 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         )
     if has_lean:
         fields += (
-            f"\n**submit_lean_proof**: provide {num_sorries} `[[lean_blocks]]` section(s) + optional `lean_context`:\n"
-            f"{_TOML_OPEN_TAG}\n"
-            f"lean_context = {_TQ}\n"
-            "optional helper definitions (placed after imports, no import statements allowed)\n"
-            f"{_TQ}\n"
-            "\n"
+            f"\nThe formal Lean proof item must contain {num_sorries} replacement block(s) "
+            f"(one per `sorry` in THEOREM.lean), separated by `--- BLOCK ---` delimiters if more than one. "
+            f"Optional context (helper definitions) goes before the first block, separated by `--- CONTEXT ---`. "
+            f"No `import` statements allowed. Example:\n"
+            f"```\n"
+            f"--- CONTEXT ---\n"
+            f"helper definitions here\n"
+            f"--- BLOCK ---\n"
+            f"replacement for sorry #0\n"
         )
-        for i in range(min(num_sorries, 3)):
+        if num_sorries > 1:
             fields += (
-                f"[[lean_blocks]]\n"
-                f"code = {_TQ}\n"
-                f"replacement for sorry #{i}\n"
-                f"{_TQ}\n"
-                "\n"
+                f"--- BLOCK ---\n"
+                f"replacement for sorry #1\n"
             )
-        if num_sorries > 3:
-            fields += f"# ... up to {num_sorries} [[lean_blocks]] total\n\n"
-        fields += f"{_TOML_CLOSE_TAG}\n"
+        fields += f"```\n"
     return fields
 
 
@@ -225,23 +233,31 @@ def _build_repo_items_section(*, lean_items: bool) -> str:
 
 
 def _build_submit_proof_section(*, lean_mode: str, has_lean: bool) -> str:
-    """Build the CRITICAL: submit_proof section."""
-    if lean_mode == "formalize_only":
-        return ""
-    if has_lean:
-        return (
-            "## submit_proof\n"
-            "\n"
-            "Only use submit_proof when you have a COMPLETE, RIGOROUS proof. "
-            "Have it independently verified at least once by a worker first. "
-            "You can re-submit to refine the proof if needed.\n"
-        )
-    return (
-        "## CRITICAL: submit_proof\n"
+    """Build the submit_proof section."""
+    section = (
+        "## submit_proof\n"
         "\n"
-        "NEVER use submit_proof unless you have a COMPLETE, RIGOROUS proof that has been VERIFIED by an independent worker. "
-        "submit_proof **terminates the session** — there is no going back. The proof field must contain the full proof text.\n"
+        "submit_proof references repo item slug(s) — write the proof as a repo item first, "
+        "then submit when finalized. "
     )
+    if lean_mode == "formalize_only":
+        section += (
+            "Provide `lean_proof_slug` pointing to a repo item with the Lean proof body. "
+            "It will be assembled with the theorem template and auto-verified.\n"
+        )
+    elif has_lean:
+        section += (
+            "Provide `proof_slug` for the informal proof and/or `lean_proof_slug` for the formal Lean proof. "
+            "You can submit one at a time. The lean proof is assembled with the theorem template and auto-verified. "
+            "The session ends when both are accepted. "
+            "Have the informal proof independently verified by a worker first.\n"
+        )
+    else:
+        section += (
+            "NEVER submit unless the proof has been VERIFIED by an independent worker. "
+            "submit_proof **terminates the session** — there is no going back.\n"
+        )
+    return section
 
 
 def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True,
@@ -252,7 +268,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
 
     actions = _build_actions(
         lean_mode=lean_mode, has_lean=has_lean, allow_give_up=allow_give_up,
-        isolation=isolation, num_sorries=num_sorries,
+        isolation=isolation,
     )
     principles = _build_principles(
         lean_mode=lean_mode, has_lean=has_lean,
@@ -567,27 +583,7 @@ def parse_planner_toml(text: str) -> dict | None:
         except Exception:
             parsed = _parse_toml_minimal(toml_text)
 
-    if parsed is not None:
-        _collect_lean_blocks(parsed)
-
     return parsed
-
-
-def _collect_lean_blocks(parsed: dict):
-    """Normalize lean_block_N numbered keys into a lean_blocks list.
-
-    Supports ``[[lean_blocks]]`` array-of-tables with ``code`` field.
-    Also rescues ``lean_context`` if it ended up inside a lean_blocks entry
-    (TOML puts keys after [[lean_blocks]] into that table).
-    """
-    if "lean_blocks" in parsed and isinstance(parsed["lean_blocks"], list):
-        blocks = parsed["lean_blocks"]
-        if blocks and isinstance(blocks[0], dict):
-            # Rescue lean_context from last entry if present
-            for b in blocks:
-                if "lean_context" in b and "lean_context" not in parsed:
-                    parsed["lean_context"] = b.pop("lean_context")
-            parsed["lean_blocks"] = [b.get("code", "") for b in blocks]
 
 
 def _parse_toml_minimal(text: str) -> dict | None:
@@ -597,8 +593,8 @@ def _parse_toml_minimal(text: str) -> dict | None:
     key = [...] arrays, [[tasks]] and [[items]] array-of-tables.
     """
     result: dict = {}
-    # Array-of-tables: [[tasks]], [[items]], [[lean_blocks]]
-    array_tables: dict[str, list[dict]] = {"tasks": [], "items": [], "lean_blocks": []}
+    # Array-of-tables: [[tasks]], [[items]]
+    array_tables: dict[str, list[dict]] = {"tasks": [], "items": []}
     current_table: dict | None = None
 
     lines = text.split('\n')
@@ -611,8 +607,8 @@ def _parse_toml_minimal(text: str) -> dict | None:
             i += 1
             continue
 
-        # [[tasks]], [[items]], or [[lean_blocks]] — start a new table entry
-        if line in ('[[tasks]]', '[[items]]', '[[lean_blocks]]'):
+        # [[tasks]] or [[items]] — start a new table entry
+        if line in ('[[tasks]]', '[[items]]'):
             table_name = line[2:-2]
             current_table = {}
             array_tables[table_name].append(current_table)

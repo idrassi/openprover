@@ -138,7 +138,8 @@ class LeanWorkDir:
     def make_file(self, slug: str, content: str, ext: str = ".lean") -> Path:
         """Write a file with slug-based name + random suffix."""
         suffix = secrets.token_hex(3)  # 6 hex chars
-        path = self.dir / f"{slug}-{suffix}{ext}"
+        flat_slug = slug.replace("/", "_")
+        path = self.dir / f"{flat_slug}-{suffix}{ext}"
         path.write_text(content)
         return path
 

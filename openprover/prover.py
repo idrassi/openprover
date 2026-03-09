@@ -91,21 +91,26 @@ class Repo:
         first_line = text.split("\n", 1)[0]
         return first_line.removeprefix("Summary:").strip()
 
+    def _slug_for(self, path: Path) -> str:
+        """Return the slug for a repo file (relative path without extension)."""
+        return str(path.relative_to(self.dir).with_suffix(""))
+
     def list_summaries(self) -> str:
         """Return index: '- [[slug]]: summary' for each item."""
         entries = []
         files = sorted(
-            list(self.dir.glob("*.md")) + list(self.dir.glob("*.lean")),
-            key=lambda f: f.stem,
+            list(self.dir.rglob("*.md")) + list(self.dir.rglob("*.lean")),
+            key=lambda f: str(f.relative_to(self.dir)),
         )
         seen = set()
         for f in files:
-            if f.stem in seen:
+            slug = self._slug_for(f)
+            if slug in seen:
                 continue
-            seen.add(f.stem)
+            seen.add(slug)
             summary = self._extract_summary(f)
             tag = " (lean)" if f.suffix == ".lean" else ""
-            entries.append(f"- [[{f.stem}]]{tag}: {summary}")
+            entries.append(f"- [[{slug}]]{tag}: {summary}")
         return "\n".join(entries)
 
     def read_item(self, slug: str) -> str | None:
@@ -131,13 +136,14 @@ class Repo:
             (self.dir / f"{slug}.md").unlink(missing_ok=True)
             (self.dir / f"{slug}.lean").unlink(missing_ok=True)
         else:
+            path.parent.mkdir(parents=True, exist_ok=True)
             other_ext = ".md" if fmt == "lean" else ".lean"
             (self.dir / f"{slug}{other_ext}").unlink(missing_ok=True)
             path.write_text(content)
 
     def resolve_wikilinks(self, text: str) -> str:
         """Find [[slug]] references, return formatted appendix."""
-        slugs = re.findall(r'\[\[([a-z0-9_-]+)\]\]', text)
+        slugs = re.findall(r'\[\[([a-z0-9_/.-]+)\]\]', text)
         if not slugs:
             return ""
         parts = []
@@ -553,7 +559,7 @@ class Prover:
         # Dispatch
         if action == "submit_proof":
             self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_submit_proof(plan)
+            return self._handle_submit_proof(plan, step_dir)
         if action == "give_up":
             self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
             return self._handle_give_up()
@@ -567,9 +573,6 @@ class Prover:
             return self._handle_spawn(plan, step_dir, resp)
         if action == "literature_search":
             return self._handle_literature_search(plan, step_dir, resp)
-        if action == "submit_lean_proof":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_submit_lean_proof(plan, step_dir)
         if action == "read_theorem":
             self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
             return self._handle_read_theorem()
@@ -619,36 +622,154 @@ class Prover:
             self.tui.show_replan_notice("Feedback noted — will replan next step")
             return "continue"
 
-    def _handle_submit_proof(self, plan: dict) -> str:
-        if self.mode == "formalize_only":
-            self.tui.log("submit_proof not available in formalize-only mode", color="red")
-            self._push_output(
-                "submit_proof rejected: in formalize-only mode, use submit_lean_proof instead."
-            )
-            return "continue"
+    def _handle_submit_proof(self, plan: dict, step_dir: Path) -> str:
+        proof_slug = plan.get("proof_slug", "")
+        lean_proof_slug = plan.get("lean_proof_slug", "")
+        feedback_parts: list[str] = []
 
-        proof = plan.get("proof", "")
-        if not proof:
-            self.tui.log("submit_proof but no proof text — continuing", color="red")
-            self._push_output("submit_proof rejected: no proof text provided.")
-            return "continue"
-        self.proof_text = proof
-        (self.work_dir / "PROOF.md").write_text(proof)
-        proof_path = self.work_dir / "PROOF.md"
-        self.tui.log(f"PROOF.md written  {proof_path}", color="green")
-        logger.info("PROOF.md written")
+        # ── Informal proof (proof_slug) ──────────────────────────
+        if proof_slug:
+            if self.mode == "formalize_only":
+                feedback_parts.append(
+                    "proof_slug ignored: in formalize-only mode, only lean_proof_slug is used."
+                )
+            else:
+                content = self.repo.read_item(proof_slug)
+                if not content:
+                    self.tui.log(f"submit_proof: [[{proof_slug}]] not found", color="red")
+                    self._push_output(f"submit_proof rejected: repo item [[{proof_slug}]] not found.")
+                    return "continue"
+                self.proof_text = content
+                (self.work_dir / "PROOF.md").write_text(content)
+                self.tui.log(f"PROOF.md written from [[{proof_slug}]]", color="green")
+                logger.info("PROOF.md written from [[%s]]", proof_slug)
+                feedback_parts.append(f"PROOF.md written from [[{proof_slug}]].")
 
-        if self.mode == "prove_and_formalize":
-            if not (self.work_dir / "PROOF.lean").exists():
-                self.tui.log("PROOF.lean not yet produced — continuing", color="yellow")
+        # ── Formal lean proof (lean_proof_slug) ──────────────────
+        if lean_proof_slug:
+            if not self.lean_theorem:
+                self.tui.log("submit_proof: lean_proof_slug requires --lean-theorem", color="red")
+                self._push_output("submit_proof rejected: no THEOREM.lean configured.")
+                return "continue"
+
+            content = self.repo.read_item(lean_proof_slug)
+            if not content:
+                self.tui.log(f"submit_proof: [[{lean_proof_slug}]] not found", color="red")
+                self._push_output(f"submit_proof rejected: repo item [[{lean_proof_slug}]] not found.")
+                return "continue"
+
+            # Parse blocks and optional context from the item content
+            blocks, context = self._parse_lean_proof_item(content)
+            logger.info("Lean proof from [[%s]]: %d block(s)", lean_proof_slug, len(blocks))
+
+            try:
+                proof_text = self.lean_theorem.assemble_proof(blocks, context)
+            except ValueError as e:
+                self.tui.log(f"Assembly error: {e}", color="red")
+                logger.warning("Assembly error: %s", e)
+                self._push_output(f"submit_proof lean assembly error: {e}")
+                return "continue"
+
+            # Write and verify
+            proof_path = self.lean_work_dir.make_file("proof-attempt", proof_text)
+            self.tui.log(f"Verifying Lean proof: {proof_path.name}...", dim=True)
+            success, lean_feedback, cmd_info = run_lean_check(proof_path, self.lean_project_dir)
+
+            # Archive
+            lean_dir = step_dir / "lean"
+            lean_dir.mkdir(exist_ok=True)
+            (lean_dir / "proof_attempt.lean").write_text(proof_text)
+            (lean_dir / "proof_result.txt").write_text("OK" if success else lean_feedback)
+            (lean_dir / "proof_cmd.txt").write_text(cmd_info)
+
+            if success:
+                self.lean_work_dir.write_proof(proof_text)
+                (self.work_dir / "PROOF.lean").write_text(proof_text)
+                self.tui.log("Lean proof verified!", color="green", bold=True)
+                logger.info("Lean proof verified! PROOF.lean written from [[%s]]", lean_proof_slug)
+                feedback_parts.append(f"PROOF.lean written from [[{lean_proof_slug}]] (verified OK).")
+            else:
+                self.tui.log("Lean verification failed", color="red")
+                logger.info("Lean proof verification failed")
                 self._push_output(
-                    "PROOF.md written. Now formalize the proof in Lean via submit_lean_proof."
+                    f"submit_proof: Lean verification FAILED for [[{lean_proof_slug}]].\n\n"
+                    f"Lean feedback:\n```\n{lean_feedback}\n```\n\n"
+                    f"Fix the issues and try again."
                 )
                 return "continue"
-            self.tui.log("Both PROOF.md and PROOF.lean complete!", color="green", bold=True)
-            logger.info("Both PROOF.md and PROOF.lean complete")
 
-        return "stop"
+        # ── Validate we got something ────────────────────────────
+        if not proof_slug and not lean_proof_slug:
+            self.tui.log("submit_proof: no slugs provided", color="red")
+            self._push_output("submit_proof rejected: provide proof_slug and/or lean_proof_slug.")
+            return "continue"
+
+        # ── Check completion ─────────────────────────────────────
+        has_md = (self.work_dir / "PROOF.md").exists()
+        has_lean = (self.work_dir / "PROOF.lean").exists()
+
+        if self.mode == "prove":
+            if has_md:
+                self._push_output("\n".join(feedback_parts))
+                return "stop"
+        elif self.mode == "formalize_only":
+            if has_lean:
+                self._push_output("\n".join(feedback_parts))
+                return "stop"
+        elif self.mode == "prove_and_formalize":
+            if has_md and has_lean:
+                self.tui.log("Both PROOF.md and PROOF.lean complete!", color="green", bold=True)
+                logger.info("Both PROOF.md and PROOF.lean complete")
+                self._push_output("\n".join(feedback_parts))
+                return "stop"
+            missing = []
+            if not has_md:
+                missing.append("PROOF.md (provide proof_slug)")
+            if not has_lean:
+                missing.append("PROOF.lean (provide lean_proof_slug)")
+            feedback_parts.append(f"Still missing: {', '.join(missing)}.")
+
+        self._push_output("\n".join(feedback_parts))
+        return "continue"
+
+    @staticmethod
+    def _parse_lean_proof_item(content: str) -> tuple[list[str], str]:
+        """Parse a lean proof repo item into (blocks, context).
+
+        Format:
+            --- CONTEXT ---
+            helper definitions
+            --- BLOCK ---
+            replacement for sorry #0
+            --- BLOCK ---
+            replacement for sorry #1
+
+        If no delimiters, the entire content is treated as a single block.
+        """
+        context = ""
+        # Check for delimiter-based format
+        if "--- BLOCK ---" in content:
+            parts = re.split(r'^---\s*BLOCK\s*---\s*$', content, flags=re.MULTILINE)
+            first = parts[0]
+            # Check if first part has context delimiter
+            if "--- CONTEXT ---" in first:
+                ctx_parts = re.split(r'^---\s*CONTEXT\s*---\s*$', first, flags=re.MULTILINE)
+                context = ctx_parts[-1].strip()
+                # Anything before --- CONTEXT --- is ignored (e.g. summary line)
+            else:
+                # First part before any BLOCK might be context or empty
+                first_stripped = first.strip()
+                if first_stripped:
+                    context = first_stripped
+            blocks = [p.strip() for p in parts[1:]]
+        elif "--- CONTEXT ---" in content:
+            parts = re.split(r'^---\s*CONTEXT\s*---\s*$', content, flags=re.MULTILINE)
+            context = parts[-1].strip() if len(parts) > 1 else ""
+            blocks = [parts[0].strip()] if parts[0].strip() else []
+        else:
+            # No delimiters — entire content is a single block
+            blocks = [content.strip()]
+        return blocks, context
 
     def _handle_give_up(self) -> str:
         if self.step_num < self.max_steps * max(self.give_up_ratio, 0.8):
@@ -701,10 +822,11 @@ class Prover:
 
                 lean_dir = step_dir / "lean"
                 lean_dir.mkdir(exist_ok=True)
-                (lean_dir / f"item_{lean_idx}_{slug}.lean").write_text(content)
-                (lean_dir / f"result_{lean_idx}_{slug}.txt").write_text(
+                flat_slug = slug.replace("/", "_")
+                (lean_dir / f"item_{lean_idx}_{flat_slug}.lean").write_text(content)
+                (lean_dir / f"result_{lean_idx}_{flat_slug}.txt").write_text(
                     "OK" if success else feedback)
-                (lean_dir / f"cmd_{lean_idx}_{slug}.txt").write_text(cmd_info)
+                (lean_dir / f"cmd_{lean_idx}_{flat_slug}.txt").write_text(cmd_info)
                 lean_idx += 1
 
                 if success:
@@ -733,78 +855,6 @@ class Prover:
                 "## Lean Verification Results\n\n" + "\n\n".join(lean_feedback)
             )
         return "continue"
-
-    def _handle_submit_lean_proof(self, plan: dict, step_dir: Path) -> str:
-        if not self.lean_theorem:
-            self.tui.log("submit_lean_proof requires --lean-theorem", color="red")
-            self._push_output("submit_lean_proof rejected: no THEOREM.lean configured.")
-            return "continue"
-
-        blocks = plan.get("lean_blocks", [])
-        context = plan.get("lean_context", "")
-        logger.info("Submitting Lean proof (%d blocks)", len(blocks))
-
-        if not blocks:
-            self.tui.log("submit_lean_proof: no lean_blocks provided", color="red")
-            self._push_output(
-                f"submit_lean_proof rejected: no lean_blocks provided. "
-                f"Expected {self.lean_theorem.num_sorries} block(s)."
-            )
-            return "continue"
-
-        # Assemble the proof file
-        try:
-            proof_text = self.lean_theorem.assemble_proof(blocks, context)
-        except ValueError as e:
-            self.tui.log(f"Assembly error: {e}", color="red")
-            logger.warning("Assembly error: %s", e)
-            self._push_output(f"submit_lean_proof assembly error: {e}")
-            return "continue"
-
-        # Write to temp file and verify
-        proof_path = self.lean_work_dir.make_file("proof-attempt", proof_text)
-        self.tui.log(f"Verifying Lean proof: {proof_path.name}...", dim=True)
-
-        success, feedback, cmd_info = run_lean_check(proof_path, self.lean_project_dir)
-
-        # Archive lean I/O
-        lean_dir = step_dir / "lean"
-        lean_dir.mkdir(exist_ok=True)
-        (lean_dir / "proof_attempt.lean").write_text(proof_text)
-        (lean_dir / "proof_result.txt").write_text("OK" if success else feedback)
-        (lean_dir / "proof_cmd.txt").write_text(cmd_info)
-
-        if success:
-            self.lean_work_dir.write_proof(proof_text)
-            (self.work_dir / "PROOF.lean").write_text(proof_text)
-            self.tui.log("Lean proof verified!", color="green", bold=True)
-            self.tui.log(f"  {self.work_dir / 'PROOF.lean'}", dim=True)
-            logger.info("Lean proof verified! PROOF.lean written")
-
-            if self.mode == "formalize_only":
-                return "stop"
-
-            # prove_and_formalize: check if PROOF.md also exists
-            if (self.work_dir / "PROOF.md").exists():
-                self.tui.log("Both PROOF.md and PROOF.lean complete!",
-                             color="green", bold=True)
-                logger.info("Both PROOF.md and PROOF.lean complete")
-                return "stop"
-
-            self._push_output(
-                "Lean proof verified! PROOF.lean has been written.\n"
-                "Now produce the informal proof using submit_proof."
-            )
-            return "continue"
-        else:
-            self.tui.log("Lean verification failed", color="red")
-            logger.info("Lean proof verification failed")
-            self._push_output(
-                f"submit_lean_proof verification FAILED.\n\n"
-                f"Lean feedback:\n```\n{feedback}\n```\n\n"
-                f"Fix the issues and try again."
-            )
-            return "continue"
 
     def _handle_read_theorem(self) -> str:
         parts = [f"## THEOREM.md\n\n{self.theorem_text}"]
@@ -1404,10 +1454,6 @@ class Prover:
                 lines.append("\n[[tasks]]")
                 desc = task.get("description", "")
                 lines.append(f'description = """\n{desc}\n"""')
-        if "lean_blocks" in plan:
-            for block in plan["lean_blocks"]:
-                lines.append("\n[[lean_blocks]]")
-                lines.append(f'code = """\n{block}\n"""')
         (step_dir / "planner.toml").write_text("\n".join(lines) + "\n")
 
     @staticmethod

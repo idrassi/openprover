@@ -116,7 +116,7 @@ class LLMClient:
             stream_callback: If provided, called with text chunks as they arrive.
                 Signature: callback(text: str).
             tool_callback: If provided, called when MCP tool events are detected.
-                Signature: tool_callback(name: str, input: dict, result: str, status: str).
+                Signature: tool_callback(name: str, input: dict, result: str, status: str, duration_ms: int).
 
         Returns dict with keys: result (str), cost (float), duration_ms (int),
         raw (full JSON response).
@@ -232,7 +232,7 @@ class LLMClient:
         Args:
             tool_callback: Optional callback for MCP tool events.
                 Signature: tool_callback(tool_name: str, tool_input: dict,
-                                         result: str, status: str)
+                                         result: str, status: str, duration_ms: int)
         """
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -314,6 +314,7 @@ class LLMClient:
                             _pending_tools[_cur_tool_id] = {
                                 "name": _cur_tool_name,
                                 "input": tool_input,
+                                "start_time": time.time(),
                             }
 
                 # Claude CLI emits tool results as {"type": "user"} messages
@@ -355,8 +356,11 @@ class LLMClient:
                                 status = "error"
                             else:
                                 status = "ok"
+                            duration_ms = int(
+                                (time.time() - tc.get("start_time", time.time())) * 1000)
                             tool_callback(
-                                name, tc["input"], result_text, status)
+                                name, tc["input"], result_text, status,
+                                duration_ms)
 
                 elif msg_type == "result":
                     result_data = msg

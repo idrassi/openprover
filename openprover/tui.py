@@ -446,7 +446,7 @@ class TUI:
             self._redraw()
 
     def add_worker_action(self, tab_id: str, tool: str, args: dict,
-                          result: str, status: str):
+                          result: str, status: str, duration_ms: int = 0):
         """Record a completed tool call in a worker tab as a navigable entry."""
         tab = self._find_tab(tab_id)
         entry = {
@@ -455,6 +455,7 @@ class TUI:
             "args": args,
             "result": result,
             "status": status,
+            "duration_ms": duration_ms,
         }
         idx = len(tab.entries)
         tab.entries.append(entry)
@@ -479,7 +480,12 @@ class TUI:
             summary = first
         else:
             summary = ""
-        return f'{color}▸{RESET} {BOLD}{tool}{RESET} {icon} {DIM}—{RESET} {summary}'
+        duration_ms = entry.get("duration_ms", 0)
+        if duration_ms:
+            dur = f" {DIM}({duration_ms / 1000:.1f}s){RESET}"
+        else:
+            dur = ""
+        return f'{color}▸{RESET} {BOLD}{tool}{RESET} {icon}{dur} {DIM}—{RESET} {summary}'
 
     def clear_worker_tabs(self):
         """Remove all worker tabs, keeping planner and logs."""
@@ -1619,12 +1625,14 @@ class TUI:
             for line in lines:
                 parts.append(f"  {line}" if line else "")
 
-        # Status
+        # Status + Duration
         status = entry.get("status", "")
+        duration_ms = entry.get("duration_ms", 0)
+        dur_text = f"  ({duration_ms / 1000:.1f}s)" if duration_ms else ""
         if status == "ok":
-            add_section("Status", [f"{GREEN}● succeeded{RESET}"], color=YELLOW)
+            add_section("Status", [f"{GREEN}● succeeded{RESET}{dur_text}"], color=YELLOW)
         else:
-            add_section("Status", [f"{RED}● failed{RESET}"], color=YELLOW)
+            add_section("Status", [f"{RED}● failed{RESET}{dur_text}"], color=YELLOW)
 
         # Arguments
         args = entry.get("args", {})
@@ -2498,8 +2506,9 @@ class HeadlessTUI:
         pass
 
     def add_worker_action(self, tab_id: str, tool: str, args: dict,
-                          result: str, status: str):
-        print(f"[action] {tool} — {status}", flush=True)
+                          result: str, status: str, duration_ms: int = 0):
+        dur = f" ({duration_ms / 1000:.1f}s)" if duration_ms else ""
+        print(f"[action] {tool} — {status}{dur}", flush=True)
 
     def clear_worker_tabs(self):
         pass

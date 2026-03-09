@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1030,6 +1031,12 @@ class Prover:
             result = wresp["result"] if wresp else ""
             parts.append(f"## Worker {i}: {first_line}\n\n{result}")
             (workers_dir / f"result_{i}.md").write_text(result or "")
+            # Save tool calls log
+            tc_log = wresp.get("tool_calls_log", []) if wresp else []
+            if tc_log:
+                (workers_dir / f"tool_calls_{i}.json").write_text(
+                    json.dumps(tc_log, indent=2, default=str)
+                )
 
         self._push_output("\n\n".join(parts))
 
@@ -1196,11 +1203,18 @@ class Prover:
         use_tools = use_vllm_tools or use_mcp_tools
         system_prompt = prompts.worker_system_prompt(lean_worker_actions=use_tools)
 
+        tool_calls_log: list[dict] = []
+
         if not use_vllm_tools:
             # Single-turn path: Claude CLI (with or without MCP) or non-vLLM
             # When MCP is configured, Claude CLI handles tool calling internally.
-            def _tool_cb(name, tool_input, result, status):
-                self.tui.add_worker_action(worker_id, name, tool_input, result, status)
+            def _tool_cb(name, tool_input, result, status, duration_ms=0):
+                logger.info("[%s] %s: %s (%dms)", worker_id, name, status, duration_ms)
+                tool_calls_log.append({
+                    "tool": name, "args": tool_input, "result": result,
+                    "status": status, "duration_ms": duration_ms,
+                })
+                self.tui.add_worker_action(worker_id, name, tool_input, result, status, duration_ms)
 
             self.tui.stream_start("working...", tab=worker_id)
             try:
@@ -1252,6 +1266,7 @@ class Prover:
                 self.tui.stream_end(tab=worker_id)
                 resp = {"result": f"Worker error: {e}", "cost": 0.0,
                         "duration_ms": 0, "raw": {}, "error": str(e)}
+            resp["tool_calls_log"] = tool_calls_log
             return resp
 
         # Multi-turn tool-calling path (vLLM)
@@ -1301,14 +1316,24 @@ class Prover:
                         except json.JSONDecodeError:
                             tool_args = {"raw": tc["function"]["arguments"]}
 
+                        t0 = time.time()
                         tool_result, tool_status = self._execute_worker_tool(
                             tool_name, tool_args, worker_id,
                         )
+                        tool_dur_ms = int((time.time() - t0) * 1000)
+                        logger.info("[%s] %s: %s (%dms)",
+                                    worker_id, tool_name, tool_status, tool_dur_ms)
+
+                        tool_calls_log.append({
+                            "tool": tool_name, "args": tool_args,
+                            "result": tool_result, "status": tool_status,
+                            "duration_ms": tool_dur_ms,
+                        })
 
                         # Add to TUI
                         self.tui.add_worker_action(
                             worker_id, tool_name, tool_args,
-                            tool_result, tool_status,
+                            tool_result, tool_status, tool_dur_ms,
                         )
 
                         # Append tool result message
@@ -1367,6 +1392,7 @@ class Prover:
             result = {"result": f"Worker error: {e}", "cost": total_cost,
                       "duration_ms": total_duration, "raw": {}, "error": str(e)}
 
+        result["tool_calls_log"] = tool_calls_log
         return result
 
     def _execute_worker_tool(self, name: str, args: dict, worker_id: str) -> tuple[str, str]:
@@ -1405,9 +1431,13 @@ class Prover:
 
         rerank = 25 if torch.cuda.is_available() else 0
         try:
+            t0 = time.time()
             results = asyncio.run(
                 self.lean_explore_service.search(query, limit=10, rerank_top=rerank)
             )
+            elapsed = time.time() - t0
+            logger.info("[%s] lean_search query=%r returned %d results in %.1fs",
+                        worker_id, query, len(results) if results else 0, elapsed)
             if not results:
                 return ("No results found", "ok")
             parts = []

@@ -37,7 +37,8 @@ def _run_problem(problem_name: str, statement: str, lean_dir: Path,
         f.write(f"{statement}\n")
         theorem_path = f.name
 
-    cmd = ["openprover", theorem_path, "--model", args.model,
+    cmd = ["openprover", "--theorem", theorem_path,
+           "--model", args.model,
            "--max-steps", str(args.max_steps), "--headless",
            "-P", str(args.parallelism)]
 
@@ -52,12 +53,14 @@ def _run_problem(problem_name: str, statement: str, lean_dir: Path,
             cmd.extend(["--lean-project", str(lean_dir)])
             cmd.extend(["--lean-theorem", str(lean_theorem_path)])
 
-    hf_models = {"qed-nano", "qwen3-4b"}
+    hf_models = {"qed-nano", "qwen3-4b", "minimax-m2.5"}
     used_models = {args.model, args.planner_model, args.worker_model} - {None}
     if used_models & hf_models:
         cmd.extend(["--provider-url", args.provider_url])
     if args.isolation:
         cmd.append("--isolation")
+    else:
+        cmd.append("--no-isolation")
 
     start = time.monotonic()
     try:
@@ -141,7 +144,7 @@ def main():
                         help="Number of concurrent openprover instances (default: 1)")
     parser.add_argument("-P", "--parallelism", type=int, default=1,
                         help="Max parallel workers per spawn step inside openprover (default: 1)")
-    model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b"]
+    model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b", "minimax-m2.5"]
     parser.add_argument("--model", default="sonnet", choices=model_choices)
     parser.add_argument("--planner-model", choices=model_choices, default=None,
                         help="Override model for planner (defaults to --model)")
@@ -153,7 +156,7 @@ def main():
     parser.add_argument("--autonomous", action="store_true")
     parser.add_argument("--informal", action="store_true",
                         help="Skip Lean setup/verification; run openprover without formal checking")
-    parser.add_argument("--isolation", action="store_true")
+    parser.add_argument("--isolation", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -208,7 +211,8 @@ def main():
             f.write(f"{statement}\n")
             theorem_path = f.name
 
-        cmd = ["openprover", theorem_path, "--model", args.model,
+        cmd = ["openprover", "--theorem", theorem_path,
+               "--model", args.model,
                "--max-steps", str(args.max_steps),
                "-P", str(args.parallelism)]
 
@@ -226,7 +230,7 @@ def main():
                 print(f"Warning: Lean theorem not found at {lean_theorem_path}."
                       " Running without formal verification.", file=sys.stderr)
 
-        hf_models = {"qed-nano", "qwen3-4b"}
+        hf_models = {"qed-nano", "qwen3-4b", "minimax-m2.5"}
         used_models = {args.model, args.planner_model, args.worker_model} - {None}
         if used_models & hf_models:
             cmd.extend(["--provider-url", args.provider_url])
@@ -234,6 +238,8 @@ def main():
             cmd.append("--autonomous")
         if args.isolation:
             cmd.append("--isolation")
+        else:
+            cmd.append("--no-isolation")
         if args.verbose:
             cmd.append("--verbose")
 

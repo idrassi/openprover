@@ -1,3 +1,8 @@
+!! (see last nontrivial run)
+- cycling
+- formal proof submission is broken
+
+
 - ResearchStep dataset
 - maybe we can try using QED-Nano? If this worked, that would be very cool.
 - integration with tools like blueprint or Corca

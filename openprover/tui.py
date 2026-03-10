@@ -1724,7 +1724,12 @@ class TUI:
     @staticmethod
     def _wrap_visual_text(
             text: str, max_w: int, continuation_prefix: str = "") -> list[str]:
-        """Wrap text by visible width while preserving ANSI sequences."""
+        """Wrap text by visible width while preserving ANSI sequences.
+
+        Each wrapped line is self-contained: it carries the active ANSI
+        state from prior segments so that lines render correctly even
+        when the viewport starts mid-paragraph (e.g. after scrolling).
+        """
         if max_w <= 0:
             return [text]
         cont = continuation_prefix
@@ -1735,26 +1740,40 @@ class TUI:
         parts: list[str] = []
         buf: list[str] = []
         visible = 0
+        # Track active SGR codes so continuation lines inherit styling.
+        active_sgr: list[str] = []
         i = 0
         n = len(text)
         while i < n:
             if text[i] == '\x1b':
                 m = re.match(r'\x1b\[[0-9;?]*[ -/]*[@-~]', text[i:])
                 if m:
-                    buf.append(m.group(0))
-                    i += len(m.group(0))
+                    seq = m.group(0)
+                    buf.append(seq)
+                    # Track SGR sequences (ending with 'm')
+                    if seq.endswith('m'):
+                        if seq == RESET:
+                            active_sgr.clear()
+                        else:
+                            active_sgr.append(seq)
+                    i += len(seq)
                     continue
             ch = text[i]
             buf.append(ch)
             i += 1
             visible += 1
             if visible >= max_w:
-                parts.append("".join(buf))
+                # Close styling on this line
+                line = "".join(buf)
+                if active_sgr:
+                    line += RESET
+                parts.append(line)
                 if i < n and cont:
-                    buf = [cont]
+                    # Re-apply active styling on next line
+                    buf = list(active_sgr) + [cont]
                     visible = cont_w
                 else:
-                    buf = []
+                    buf = list(active_sgr)
                     visible = 0
         if buf or not parts:
             parts.append("".join(buf))

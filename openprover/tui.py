@@ -548,20 +548,20 @@ class TUI:
         color = ACTION_STYLE.get(action, "")
         self._tab_log(planner, f'{color}▸{RESET} {BOLD}{action}{RESET} {DIM}—{RESET} {summary}')
 
-        # Show task descriptions for spawn
-        tasks = plan.get("tasks", [])
-        for i, task in enumerate(tasks):
-            desc = task.get("description", "").strip()
-            if desc:
-                lines = desc.splitlines()
-                self._tab_log(planner, f'  {DIM}[{i}]{RESET} {lines[0]}')
-                for line in lines[1:]:
-                    self._tab_log(planner, f'      {line}')
-            else:
-                self._tab_log(planner, f'  {DIM}[{i}]{RESET} (no description)')
+        # Show action-specific details
+        if action == "spawn":
+            tasks = plan.get("tasks", [])
+            for i, task in enumerate(tasks):
+                desc = task.get("description", "").strip()
+                if desc:
+                    lines = desc.splitlines()
+                    self._tab_log(planner, f'  {DIM}[{i}]{RESET} {lines[0]}')
+                    for line in lines[1:]:
+                        self._tab_log(planner, f'      {line}')
+                else:
+                    self._tab_log(planner, f'  {DIM}[{i}]{RESET} (no description)')
 
-        # Show search details for literature_search
-        if action == "literature_search":
+        elif action == "literature_search":
             query = plan.get("search_query", "")
             context = plan.get("search_context", "")
             if query:
@@ -570,6 +570,37 @@ class TUI:
                 self._tab_log(planner, f'  {DIM}Context:{RESET} {context.strip().splitlines()[0]}')
                 for line in context.strip().splitlines()[1:]:
                     self._tab_log(planner, f'          {line}')
+
+        elif action == "write_items":
+            items = plan.get("items", [])
+            for item in items:
+                slug = item.get("slug", "?")
+                content = item.get("content", "")
+                if content:
+                    first_line = content.strip().splitlines()[0] if content.strip() else ""
+                    self._tab_log(planner, f'  {DIM}•{RESET} {slug} {DIM}— {first_line}{RESET}')
+                else:
+                    self._tab_log(planner, f'  {DIM}•{RESET} {slug} {DIM}(delete){RESET}')
+
+        elif action == "read_items":
+            slugs = plan.get("read", [])
+            if slugs:
+                self._tab_log(planner, f'  {DIM}{", ".join(slugs)}{RESET}')
+
+        elif action == "write_whiteboard":
+            wb = plan.get("whiteboard", "")
+            if wb:
+                lines = wb.strip().splitlines()
+                for line in lines[:6]:
+                    self._tab_log(planner, f'  {DIM}{line}{RESET}')
+                if len(lines) > 6:
+                    self._tab_log(planner, f'  {DIM}… ({len(lines) - 6} more lines){RESET}')
+
+        elif action == "submit_proof":
+            for key in ("proof_slug", "lean_proof_slug"):
+                val = plan.get(key)
+                if val:
+                    self._tab_log(planner, f'  {DIM}{key}: {val}{RESET}')
 
     def _format_step_line(self, entry: dict) -> str:
         action = entry.get("action", "")

@@ -579,6 +579,11 @@ class Prover:
         if self.autonomous:
             return None
 
+        # Reading actions don't need approval
+        action = plan.get("action", "")
+        if action in ("read_items", "read_theorem"):
+            return None
+
         self.tui.show_proposal(plan)
         while True:
             user_resp = self.tui.get_confirmation()

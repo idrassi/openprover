@@ -69,6 +69,8 @@ def _split_think_tags(text: str) -> tuple[str, str]:
 class LLMClient:
     """Calls Claude via the CLI and archives all interactions."""
 
+    context_length = 200_000  # Claude models
+
     def __init__(self, model: str, archive_dir: Path,
                  max_output_tokens: int = 128_000):
         self.model = model
@@ -470,7 +472,7 @@ class HFClient:
         self.total_cost = 0.0
         self.vllm = vllm
         self._interrupted = threading.Event()
-        self.max_context_length = MODEL_CONTEXT_LENGTHS[model]
+        self.context_length = MODEL_CONTEXT_LENGTHS[model]
         self.answer_reserve = answer_reserve
         # Default completion budget differs by backend:
         # - serve_hf: full context (server subtracts prompt tokens internally)
@@ -478,10 +480,10 @@ class HFClient:
         if vllm:
             self.max_output_tokens = answer_reserve
         else:
-            self.max_output_tokens = self.max_context_length
+            self.max_output_tokens = self.context_length
         self.max_thinking_tokens = max(
-            self.max_context_length - answer_reserve,
-            self.max_context_length // 2,
+            self.context_length - answer_reserve,
+            self.context_length // 2,
         )
         self._check_server()
 

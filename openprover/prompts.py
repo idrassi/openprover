@@ -51,13 +51,13 @@ def _build_actions(*, lean_mode: str, has_lean: bool,
         actions += (
             "- **submit_proof**: Submit the informal proof by referencing a repo item slug (proof_slug). "
             "The session ends when both informal and formal proofs are accepted.\n"
-            "- **submit_lean_proof**: Submit the formal Lean 4 proof blocks by referencing a repo item slug (lean_proof_slug). "
-            "The blocks are assembled with THEOREM.lean and auto-verified. "
+            "- **submit_lean_proof**: Submit the formal Lean 4 proof by referencing a lean repo item slug (lean_proof_slug). "
+            "Auto-verified with Lean. "
             "The session ends when both informal and formal proofs are accepted.\n"
         )
     elif lean_mode == "formalize_only":
         actions += (
-            "- **submit_lean_proof**: Submit the formal Lean 4 proof blocks by referencing a repo item slug (lean_proof_slug). "
+            "- **submit_lean_proof**: Submit the formal Lean 4 proof by referencing a lean repo item slug (lean_proof_slug). "
             "Auto-verified with Lean. **If verification succeeds, the session ends.**\n"
         )
     if allow_give_up:
@@ -109,21 +109,17 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
             "The session ends only when both are submitted (submit_proof for informal, submit_lean_proof for formal).\n"
             "- After you have a proof in English, use read_theorem to see the formal theorem statement in Lean.\n"
             "- Before submitting, run at least one independent verification worker that checks the full informal proof end-to-end.\n"
-            "- **Lean workflow**: (1) Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
+            "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
             "this must be a standalone .lean file with imports, and is auto-verified on write. "
-            "(2) Once the Lean file compiles, write a **separate markdown repo item** containing just the sorry-replacement blocks "
-            "in `--- BLOCK ---` / `--- CONTEXT ---` format (no imports — these get spliced into THEOREM.lean). "
-            "(3) Call submit_lean_proof with that blocks item's slug — this assembles and independently re-verifies.\n"
+            "Once it compiles, call submit_lean_proof with the item's slug — this independently re-verifies.\n"
         )
     elif lean_mode == "formalize_only":
         principles += (
             "- An informal proof (PROOF.md) is already provided. Your only goal is to produce PROOF.lean.\n"
             "- Use read_theorem to view the informal proof and Lean theorem statement.\n"
-            "- **Lean workflow**: (1) Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
+            "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
             "this must be a standalone .lean file with imports, and is auto-verified on write. "
-            "(2) Once the Lean file compiles, write a **separate markdown repo item** containing just the sorry-replacement blocks "
-            "in `--- BLOCK ---` / `--- CONTEXT ---` format (no imports — these get spliced into THEOREM.lean). "
-            "(3) Call submit_lean_proof with that blocks item's slug — this assembles and independently re-verifies. "
+            "Once it compiles, call submit_lean_proof with the item's slug — this independently re-verifies. "
             "The session ends when verification succeeds.\n"
         )
     elif lean_mode == "prove":
@@ -134,8 +130,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
 
 
 def _build_toml_fields(*, lean_mode: str, has_lean: bool,
-                       isolation: bool, lean_items: bool,
-                       num_sorries: int) -> str:
+                       isolation: bool, lean_items: bool) -> str:
     """Build the TOML fields reference section."""
     fields = ""
     # submit_proof / submit_lean_proof field docs (mode-dependent)
@@ -196,24 +191,10 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         )
     if has_lean:
         fields += (
-            f"\n**submit_lean_proof format** (different from lean repo items!): "
-            f"The item referenced by `lean_proof_slug` must be a **markdown** repo item (not format=\"lean\") "
-            f"containing {num_sorries} replacement block(s) "
-            f"(one per `sorry` in THEOREM.lean), separated by `--- BLOCK ---` delimiters if more than one. "
-            f"Optional context (helper definitions, no imports) goes before the first block, separated by `--- CONTEXT ---`. "
-            f"No `import` statements — the blocks are spliced into THEOREM.lean which already has imports. Example:\n"
-            f"```\n"
-            f"--- CONTEXT ---\n"
-            f"helper definitions here (no imports)\n"
-            f"--- BLOCK ---\n"
-            f"replacement for sorry #0\n"
+            f"\n**submit_lean_proof**: `lean_proof_slug` must reference a **lean** repo item "
+            f"(written with format=\"lean\"). The item is a complete, standalone .lean file "
+            f"that is independently re-verified on submission.\n"
         )
-        if num_sorries > 1:
-            fields += (
-                f"--- BLOCK ---\n"
-                f"replacement for sorry #1\n"
-            )
-        fields += f"```\n"
     return fields
 
 
@@ -254,14 +235,10 @@ def _build_submit_proof_section(*, lean_mode: str, has_lean: bool) -> str:
         section += (
             "## submit_lean_proof\n"
             "\n"
-            "submit_lean_proof takes `lean_proof_slug` pointing to a **markdown** repo item containing "
-            "the sorry-replacement blocks in `--- BLOCK ---` / `--- CONTEXT ---` format. "
-            "**This is NOT a complete Lean file** — it contains only the proof bodies that get spliced into THEOREM.lean. "
-            "No `import` statements.\n"
-            "\n"
-            "**Workflow**: First develop the complete Lean proof as a lean repo item (write_items format=\"lean\", "
-            "which is a standalone .lean file with imports — auto-verified on write). "
-            "Once it compiles, create a separate markdown item with just the blocks, then submit_lean_proof.\n"
+            "submit_lean_proof takes `lean_proof_slug` pointing to a **lean** repo item "
+            "(written with write_items format=\"lean\"). The item must be a complete, standalone .lean file. "
+            "It is independently re-verified on submission. "
+            "The session ends when verification succeeds.\n"
         )
     elif has_lean:
         section += (
@@ -275,14 +252,9 @@ def _build_submit_proof_section(*, lean_mode: str, has_lean: bool) -> str:
             "\n"
             "## submit_lean_proof\n"
             "\n"
-            "submit_lean_proof takes `lean_proof_slug` pointing to a **markdown** repo item containing "
-            "the sorry-replacement blocks in `--- BLOCK ---` / `--- CONTEXT ---` format. "
-            "**This is NOT a complete Lean file** — it contains only the proof bodies that get spliced into THEOREM.lean. "
-            "No `import` statements.\n"
-            "\n"
-            "**Workflow**: First develop the complete Lean proof as a lean repo item (write_items format=\"lean\", "
-            "which is a standalone .lean file with imports — auto-verified on write). "
-            "Once it compiles, create a separate markdown item with just the blocks, then submit_lean_proof. "
+            "submit_lean_proof takes `lean_proof_slug` pointing to a **lean** repo item "
+            "(written with write_items format=\"lean\"). The item must be a complete, standalone .lean file. "
+            "It is independently re-verified on submission. "
             "The session ends when both informal and formal proofs are accepted.\n"
         )
     else:
@@ -298,7 +270,7 @@ def _build_submit_proof_section(*, lean_mode: str, has_lean: bool) -> str:
 
 
 def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True,
-                          lean_mode: str = "prove", num_sorries: int = 0,
+                          lean_mode: str = "prove",
                           lean_items: bool = False) -> str:
     """Build the planner system prompt, conditionally omitting actions."""
     has_lean = lean_mode in ("prove_and_formalize", "formalize_only")
@@ -313,7 +285,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
     )
     toml_fields = _build_toml_fields(
         lean_mode=lean_mode, has_lean=has_lean, isolation=isolation,
-        lean_items=lean_items, num_sorries=num_sorries,
+        lean_items=lean_items,
     )
     repo_items = _build_repo_items_section(lean_items=lean_items)
     submit_proof_section = _build_submit_proof_section(
@@ -413,12 +385,22 @@ SEARCH_SYSTEM_PROMPT = (
 )
 
 
+# ── History truncation ──────────────────────────────────────
+
+
+def _truncate_keep_end(text: str, limit: int) -> str:
+    """Truncate from the start, keeping the end (where the TOML block is)."""
+    if len(text) <= limit:
+        return text
+    return "...\n" + text[-(limit - 4):]
+
+
 # ── Prompt formatters ───────────────────────────────────────
 
 def format_planner_prompt(
     whiteboard: str,
     repo_index: str,
-    prev_outputs: list[str],
+    step_history: list[dict],
     step_num: int,
     max_steps: int,
     parallelism: int = 1,
@@ -426,6 +408,7 @@ def format_planner_prompt(
     has_lean_theorem: bool = False,
     has_proof_md: bool = False,
     has_proof_lean: bool = False,
+    history_budget: int = 0,
 ) -> str:
     parts = [f"# Whiteboard\n\n{whiteboard}"]
 
@@ -441,11 +424,33 @@ def format_planner_prompt(
 
     if repo_index:
         parts.append(f"\n\n# Repository\n\n{repo_index}")
-    if prev_outputs:
-        n = len(prev_outputs)
-        for i, output in enumerate(prev_outputs):
-            label = f"Step -{n - i}" if n > 1 else "Previous Step"
-            parts.append(f"\n\n# Output from {label}\n\n{output}")
+    if step_history and history_budget > 0:
+        # Distribute budget: split evenly across entries, 2/3 planner 1/3 output
+        per_entry = history_budget // len(step_history)
+        planner_limit = per_entry * 2 // 3
+        output_limit = per_entry - planner_limit
+
+        parts.append("\n\n# Recent History")
+        for entry in step_history:
+            step = entry.get("step", "?")
+            action = entry.get("action", "")
+            summary = entry.get("summary", "")
+            header = f"Step {step}"
+            if action:
+                header += f": {action}"
+            if summary:
+                header += f" — {summary}"
+            parts.append(f"\n\n## {header}")
+
+            planner = entry.get("planner", "")
+            if planner:
+                planner = _truncate_keep_end(planner, planner_limit)
+                parts.append(f"\n\n### Planner\n\n{planner}")
+
+            output = entry.get("output", "")
+            if output:
+                output = _truncate_keep_end(output, output_limit)
+                parts.append(f"\n\n### Result\n\n{output}")
     parts.append(f"\n\nMax {parallelism} worker(s) per spawn. What's the most productive next move?")
     return "".join(parts)
 

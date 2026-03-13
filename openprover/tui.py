@@ -152,6 +152,8 @@ class TUI:
         # Step history includes action/summary/detail plus status flags/feedback.
         self.step_entries: list[dict] = []
         self._nav_step = -1  # -1 = options focused, 0..N-1 = step index
+        self._nav_proposal = False  # True = proposed action is selected
+        self._current_proposal: dict | None = None  # stored by show_proposal
         self._step_detail_text = ""
         self._step_detail_title = ""
         self._step_detail_idx = -1
@@ -162,6 +164,7 @@ class TUI:
         self._confirm_accept_label = "accept"
         self._confirm_selected = 0
         self._confirm_buf: list[str] = []
+        self._confirm_cursor: int = 0
         # Thread safety for stdout
         self._write_lock = threading.Lock()
         self._key_process_lock = threading.Lock()
@@ -537,6 +540,7 @@ class TUI:
     def show_proposal(self, plan: dict):
         planner = self.tabs[0]
         self.clear_replan_notice()
+        self._current_proposal = plan
         self._proposal_log_start = len(planner.log_lines)
         sep = self._dim_separator()
         self._tab_log(planner, sep)
@@ -1075,6 +1079,9 @@ class TUI:
                 self._nav_step = -1
                 self._restore_worker_tabs()
                 self._redraw()
+            elif self._nav_proposal:
+                self._nav_proposal = False
+                self._redraw()
             elif self._active_tab.nav_idx >= 0:
                 self._active_tab.nav_idx = -1
                 self._redraw()
@@ -1084,6 +1091,9 @@ class TUI:
                 self._redraw()
             elif self._nav_step >= 0:
                 self._open_selected_step_detail()
+                self._redraw()
+            elif self._nav_proposal:
+                self._open_proposal_detail()
                 self._redraw()
             elif self._active_tab.nav_idx >= 0:
                 self._open_selected_action_detail()
@@ -1101,6 +1111,116 @@ class TUI:
         self._step_detail_scroll = 0
         self._refresh_step_detail()
         self.view = "step_detail"
+
+    def _open_proposal_detail(self):
+        """Open detail view for the currently proposed action."""
+        if not self._current_proposal:
+            return
+        self._step_detail_scroll = 0
+        self._refresh_proposal_detail()
+        self.view = "step_detail"
+
+    def _refresh_proposal_detail(self):
+        """Build detail text for the current proposal."""
+        plan = self._current_proposal
+        if not plan:
+            self._step_detail_title = "Proposal"
+            self._step_detail_text = "  (no proposal)"
+            return
+
+        action = plan.get("action", "")
+        summary = plan.get("summary", "")
+        action_color = ACTION_STYLE.get(action, WHITE)
+        self._step_detail_title = (
+            f"Proposed: {action_color}{action}{RESET} {DIM}—{RESET} {summary}"
+            f"  {YELLOW}● proposed{RESET}"
+        )
+
+        parts: list[str] = []
+
+        def add_section(title: str, lines: list[str], color: str = BLUE):
+            if not lines:
+                return
+            if parts:
+                parts.append(f"  {DIM}{'─' * 40}{RESET}")
+                parts.append("")
+            parts.append(f"  {color}{BOLD}{title}{RESET}")
+            for line in lines:
+                parts.append(f"  {line}" if line else "")
+
+        # Planner Output — includes reasoning when trace_visible
+        planner = self.tabs[0]
+        trace = (planner.last_trace or "").rstrip()
+        output = (planner.last_output or "").rstrip()
+        planner_lines: list[str] = []
+        if trace:
+            if self.trace_visible:
+                for line in trace.splitlines():
+                    planner_lines.append(f"{DIM}{line}{RESET}")
+                if output:
+                    planner_lines.append("")
+            else:
+                tok = self._approx_token_label(trace)
+                planner_lines.append(f"{DIM}[reasoning — {tok}]{RESET}")
+                if output:
+                    planner_lines.append("")
+        if output:
+            for is_toml, segment in self._iter_toml_segments(output):
+                if is_toml and not self.trace_visible:
+                    tok = self._approx_token_label(segment)
+                    planner_lines.append(f"{DIM}[action — {tok}]{RESET}")
+                    continue
+                for line in segment.splitlines():
+                    planner_lines.append(
+                        f"{DIM}{line}{RESET}" if is_toml else line)
+        if planner_lines:
+            add_section("Planner Output", planner_lines, color=BLUE)
+
+        # Action Input — action-specific detail from the plan dict
+        detail_lines: list[str] = []
+        if action == "spawn":
+            tasks = plan.get("tasks", [])
+            for i, task in enumerate(tasks):
+                desc = task.get("description", "").strip()
+                if desc:
+                    lines = desc.splitlines()
+                    detail_lines.append(f"[{i}] {lines[0]}")
+                    for line in lines[1:]:
+                        detail_lines.append(f"    {line}")
+                else:
+                    detail_lines.append(f"[{i}] (no description)")
+        elif action == "literature_search":
+            query = plan.get("search_query", "")
+            context = plan.get("search_context", "")
+            if query:
+                detail_lines.append(f"Query:   {query}")
+            if context:
+                for line in context.strip().splitlines():
+                    detail_lines.append(f"Context: {line}")
+        elif action == "write_items":
+            items = plan.get("items", [])
+            for item in items:
+                slug = item.get("slug", "?")
+                content = item.get("content", "")
+                ext = ".lean" if item.get("format") == "lean" else ".md"
+                if content:
+                    first = content.strip().splitlines()[0] if content.strip() else ""
+                    detail_lines.append(f"• {slug}{ext} — {first}")
+                else:
+                    detail_lines.append(f"• {slug}{ext} (delete)")
+        elif action == "read_items":
+            slugs = plan.get("read", [])
+            if slugs:
+                detail_lines.append(", ".join(slugs))
+
+        if detail_lines:
+            add_section("Action Input", detail_lines, color=CYAN)
+
+        self._step_detail_text = "\n".join(parts) if parts else "  (no detail)"
+        self._step_detail_scroll = min(
+            self._step_detail_scroll,
+            self._step_detail_max_scroll(),
+        )
 
     @staticmethod
     def _step_detail_section_title(action: str) -> str:
@@ -1125,9 +1245,33 @@ class TUI:
         action = entry.get("action", "")
         summary = entry.get("summary", "")
         action_color = ACTION_STYLE.get(action, WHITE)
+
+        # Build inline status indicator for title
+        feedback = (entry.get("feedback") or "").strip()
+        if entry.get("rejected"):
+            if feedback:
+                status_badge = (
+                    f"{YELLOW}● rejected:{RESET} {GREEN}{feedback}{RESET}"
+                )
+            else:
+                status_badge = f"{YELLOW}● rejected{RESET}"
+        elif feedback:
+            status_badge = f"{YELLOW}● feedback:{RESET} {GREEN}{feedback}{RESET}"
+        elif entry.get("interrupted"):
+            status_badge = f"{YELLOW}● interrupted{RESET}"
+        else:
+            worker_tabs = entry.get("worker_tabs") or []
+            if action == "spawn" and worker_tabs and not all(
+                getattr(t, "done", True) for t in worker_tabs
+            ):
+                status_badge = f"{CYAN}● workers running{RESET}"
+            else:
+                status_badge = f"{GREEN}● completed{RESET}"
+
         self._step_detail_title = (
             f"Step {entry.get('step_num', '?')}: "
             f"{action_color}{action}{RESET} {DIM}—{RESET} {summary}"
+            f"  {status_badge}"
         )
 
         parts: list[str] = []
@@ -1142,56 +1286,37 @@ class TUI:
             for line in lines:
                 parts.append(f"  {line}" if line else "")
 
-        feedback = (entry.get("feedback") or "").strip()
-        status_lines: list[str] = []
-        if entry.get("rejected"):
-            if feedback:
-                status_lines.append(
-                    f"{YELLOW}● rejected with feedback:{RESET} {GREEN}{feedback}{RESET}"
-                )
-            else:
-                status_lines.append(f"{YELLOW}● rejected{RESET}")
-        elif feedback:
-            status_lines.append(f"{YELLOW}● feedback:{RESET} {GREEN}{feedback}{RESET}")
-        if entry.get("interrupted"):
-            status_lines.append(f"{YELLOW}● execution interrupted{RESET}")
-        if not status_lines:
-            # For spawn actions, check if workers are still running.
-            worker_tabs = entry.get("worker_tabs") or []
-            if action == "spawn" and worker_tabs and not all(
-                getattr(t, "done", True) for t in worker_tabs
-            ):
-                status_lines.append(f"{CYAN}● workers running{RESET}")
-            else:
-                status_lines.append(f"{GREEN}● completed{RESET}")
-        add_section("Status", status_lines, color=YELLOW)
-
-        detail = (entry.get("detail") or "").strip()
-        if detail:
-            add_section(self._step_detail_section_title(action), detail.splitlines(),
-                        color=CYAN)
-
-        output_lines: list[str] = []
+        # Planner Output — includes reasoning when trace_visible
+        trace = (entry.get("trace") or "").rstrip()
         output = (entry.get("output") or "").rstrip()
+        planner_lines: list[str] = []
+        if trace:
+            if self.trace_visible:
+                for line in trace.splitlines():
+                    planner_lines.append(f"{DIM}{line}{RESET}")
+                if output:
+                    planner_lines.append("")
+            else:
+                tok = self._approx_token_label(trace)
+                planner_lines.append(f"{DIM}[reasoning — {tok}]{RESET}")
+                if output:
+                    planner_lines.append("")
         if output:
             for is_toml, segment in self._iter_toml_segments(output):
                 if is_toml and not self.trace_visible:
+                    tok = self._approx_token_label(segment)
+                    planner_lines.append(f"{DIM}[action — {tok}]{RESET}")
                     continue
                 for line in segment.splitlines():
-                    output_lines.append(f"{DIM}{line}{RESET}" if is_toml else line)
-        if output_lines:
-            add_section("Planner Output", output_lines, color=BLUE)
+                    planner_lines.append(
+                        f"{DIM}{line}{RESET}" if is_toml else line)
+        if planner_lines:
+            add_section("Planner Output", planner_lines, color=BLUE)
 
-        trace = (entry.get("trace") or "").rstrip()
-        if trace:
-            if self.trace_visible:
-                add_section("Reasoning", [f"{DIM}{line}{RESET}"
-                                          for line in trace.splitlines()],
-                            color=GREEN)
-            else:
-                add_section("Reasoning",
-                            [f"{DIM}hidden (press r to show){RESET}"],
-                            color=GREEN)
+        # Action Input
+        detail = (entry.get("detail") or "").strip()
+        if detail:
+            add_section("Action Input", detail.splitlines(), color=CYAN)
 
         if action == "spawn":
             worker_sections: list[str] = []
@@ -1246,7 +1371,9 @@ class TUI:
         self._confirm_accept_label = "accept"
         self._confirm_selected = 0
         self._confirm_buf = []
+        self._confirm_cursor = 0
         self._nav_step = -1
+        self._nav_proposal = False
         self._scroll_selection_into_view()
         self._redraw()
         self._write('\033[?25h')
@@ -1258,6 +1385,11 @@ class TUI:
                 except queue.Empty:
                     continue
 
+                # Whether the feedback text field is actively focused
+                _in_feedback = (self._confirm_selected == 1
+                                and self._nav_step == -1
+                                and not self._nav_proposal)
+
                 if ch == '\x1b':
                     if self.view != "main":
                         self.view = "main"
@@ -1265,8 +1397,12 @@ class TUI:
                         self._nav_step = -1
                         self._restore_worker_tabs()
                         self._scroll_selection_into_view()
+                    elif self._nav_proposal:
+                        self._nav_proposal = False
+                        self._scroll_selection_into_view()
                     else:
                         self._confirm_buf.clear()
+                        self._confirm_cursor = 0
                     self._redraw()
                     continue
 
@@ -1279,8 +1415,9 @@ class TUI:
 
                 if len(ch) >= 3 and ch[:2] == '\x1b[':
                     if ch == '\x1b[A':
-                        if self._nav_step == -1:
-                            if self._confirm_selected == 0 and self.step_entries:
+                        if self._nav_step == -1 and not self._nav_proposal:
+                            if self._confirm_selected == 0 and (
+                                    self.step_entries or self._current_proposal):
                                 self._nav_up()
                             else:
                                 self._confirm_selected = 0
@@ -1289,20 +1426,34 @@ class TUI:
                             self._nav_up()
                         self._redraw()
                     elif ch == '\x1b[B':
-                        if self._nav_step == -1:
+                        if self._nav_step == -1 and not self._nav_proposal:
                             self._confirm_selected = 1 - self._confirm_selected
                             self._scroll_selection_into_view()
                         else:
                             self._nav_down()
                         self._redraw()
                     elif ch == '\x1b[C':
-                        self._switch_tab(1)
+                        if _in_feedback and self._confirm_cursor < len(self._confirm_buf):
+                            self._confirm_cursor += 1
+                            self._redraw()
+                        elif not _in_feedback:
+                            self._switch_tab(1)
                     elif ch == '\x1b[D':
-                        self._switch_tab(-1)
+                        if _in_feedback and self._confirm_cursor > 0:
+                            self._confirm_cursor -= 1
+                            self._redraw()
+                        elif not _in_feedback:
+                            self._switch_tab(-1)
                     elif ch == '\x1b[5~':
                         self._scroll_up()
                     elif ch == '\x1b[6~':
                         self._scroll_down()
+                    elif _in_feedback and ch == '\x1b[H':
+                        self._confirm_cursor = 0
+                        self._redraw()
+                    elif _in_feedback and ch == '\x1b[F':
+                        self._confirm_cursor = len(self._confirm_buf)
+                        self._redraw()
                     continue
 
                 if ch in ('\n', '\r'):
@@ -1314,13 +1465,18 @@ class TUI:
                         self._open_selected_step_detail()
                         self._redraw()
                         continue
+                    if self._nav_proposal:
+                        self._open_proposal_detail()
+                        self._redraw()
+                        continue
                     if self._confirm_selected == 0:
                         return ""
                     return "".join(self._confirm_buf)
 
                 if ch in ('\x7f', '\x08'):
-                    if self._confirm_selected == 1 and self._confirm_buf:
-                        self._confirm_buf.pop()
+                    if self._confirm_selected == 1 and self._confirm_cursor > 0:
+                        self._confirm_cursor -= 1
+                        del self._confirm_buf[self._confirm_cursor]
                         self._redraw()
                     continue
 
@@ -1332,24 +1488,27 @@ class TUI:
                         self._nav_step = -1
                         self._restore_worker_tabs()
                         self._scroll_selection_into_view()
+                    elif self._nav_proposal:
+                        self._nav_proposal = False
+                        self._scroll_selection_into_view()
                     else:
                         self._confirm_selected = 1 - self._confirm_selected
                     self._redraw()
                     continue
 
-                can_toggle = (self._confirm_selected == 0 or not self._confirm_buf)
-                if can_toggle and ch in ('r', 'i', 'w', '?'):
+                if self._confirm_selected == 0 and ch in ('r', 'i', 'w', '?'):
                     self._process_key(ch)
                     continue
 
-                if (self._nav_step == -1 and self._confirm_selected == 0
-                        and ch == 's'):
+                if (self._nav_step == -1 and not self._nav_proposal
+                        and self._confirm_selected == 0 and ch == 's'):
                     return ch
 
                 if ch == 'a' and self._confirm_selected == 0:
                     if self._nav_step >= 0:
                         self._nav_step = -1
                         self._restore_worker_tabs()
+                    self._nav_proposal = False
                     self.autonomous = True
                     self._redraw()
                     return "a"
@@ -1358,9 +1517,12 @@ class TUI:
                     if self._nav_step >= 0:
                         self._nav_step = -1
                         self._restore_worker_tabs()
+                    self._nav_proposal = False
                     if self._confirm_selected == 0:
                         self._confirm_selected = 1
-                    self._confirm_buf.append(ch)
+                        self._confirm_cursor = 0
+                    self._confirm_buf.insert(self._confirm_cursor, ch)
+                    self._confirm_cursor += 1
                     self._redraw()
 
         finally:
@@ -1373,6 +1535,8 @@ class TUI:
 
     def _clear_proposal(self):
         """Remove detailed proposal lines, keeping only a compact summary."""
+        self._current_proposal = None
+        self._nav_proposal = False
         if self._proposal_log_start < 0:
             return
         planner = self.tabs[0]
@@ -1431,6 +1595,7 @@ class TUI:
         self._confirm_accept_label = "continue"
         self._confirm_selected = 1  # feedback selected by default
         self._confirm_buf = []
+        self._confirm_cursor = 0
         self._nav_step = -1
         self._redraw()
         self._write('\033[?25h')
@@ -1442,11 +1607,14 @@ class TUI:
                 except queue.Empty:
                     continue
 
+                _in_feedback = (self._confirm_selected == 1)
+
                 if ch == '\x1b':
                     if self.view != "main":
                         self.view = "main"
                     else:
                         self._confirm_buf.clear()
+                        self._confirm_cursor = 0
                     self._redraw()
                     continue
 
@@ -1459,13 +1627,27 @@ class TUI:
 
                 if len(ch) >= 3 and ch[:2] == '\x1b[':
                     if ch == '\x1b[C':
-                        self._switch_tab(1)
+                        if _in_feedback and self._confirm_cursor < len(self._confirm_buf):
+                            self._confirm_cursor += 1
+                            self._redraw()
+                        elif not _in_feedback:
+                            self._switch_tab(1)
                     elif ch == '\x1b[D':
-                        self._switch_tab(-1)
+                        if _in_feedback and self._confirm_cursor > 0:
+                            self._confirm_cursor -= 1
+                            self._redraw()
+                        elif not _in_feedback:
+                            self._switch_tab(-1)
                     elif ch == '\x1b[5~':
                         self._scroll_up()
                     elif ch == '\x1b[6~':
                         self._scroll_down()
+                    elif _in_feedback and ch == '\x1b[H':
+                        self._confirm_cursor = 0
+                        self._redraw()
+                    elif _in_feedback and ch == '\x1b[F':
+                        self._confirm_cursor = len(self._confirm_buf)
+                        self._redraw()
                     continue
 
                 if ch in ('\n', '\r'):
@@ -1478,8 +1660,9 @@ class TUI:
                     return "".join(self._confirm_buf)
 
                 if ch in ('\x7f', '\x08'):
-                    if self._confirm_selected == 1 and self._confirm_buf:
-                        self._confirm_buf.pop()
+                    if self._confirm_selected == 1 and self._confirm_cursor > 0:
+                        self._confirm_cursor -= 1
+                        del self._confirm_buf[self._confirm_cursor]
                         self._redraw()
                     continue
 
@@ -1492,15 +1675,16 @@ class TUI:
                     self._redraw()
                     continue
 
-                can_toggle = (self._confirm_selected == 0 or not self._confirm_buf)
-                if can_toggle and ch in ('r', 'w', '?'):
+                if self._confirm_selected == 0 and ch in ('r', 'w', '?'):
                     self._process_key(ch)
                     continue
 
                 if ch.isprintable():
                     if self._confirm_selected == 0:
                         self._confirm_selected = 1
-                    self._confirm_buf.append(ch)
+                        self._confirm_cursor = 0
+                    self._confirm_buf.insert(self._confirm_cursor, ch)
+                    self._confirm_cursor += 1
                     self._redraw()
 
         finally:
@@ -1513,6 +1697,7 @@ class TUI:
         self._confirming = True  # prevent bg_loop from stealing keys
         self._browsing = True
         self._nav_step = -1
+        self._nav_proposal = False
         self._redraw()
 
         try:
@@ -1564,6 +1749,9 @@ class TUI:
                         self._nav_step = -1
                         self._restore_worker_tabs()
                         self._redraw()
+                    elif self._nav_proposal:
+                        self._nav_proposal = False
+                        self._redraw()
                     elif self._active_tab.nav_idx >= 0:
                         self._active_tab.nav_idx = -1
                         self._redraw()
@@ -1575,6 +1763,9 @@ class TUI:
                         self._redraw()
                     elif self._nav_step >= 0:
                         self._open_selected_step_detail()
+                        self._redraw()
+                    elif self._nav_proposal:
+                        self._open_proposal_detail()
                         self._redraw()
                     elif self._active_tab.nav_idx >= 0:
                         self._open_selected_action_detail()
@@ -1592,12 +1783,24 @@ class TUI:
             self._confirming = False
             self._browsing = False
             self._nav_step = -1
+            self._nav_proposal = False
             self._restore_worker_tabs()
 
     def _nav_up(self):
-        if self._nav_step == -1:
+        if self._nav_step == -1 and not self._nav_proposal:
+            # At accept/feedback → go to proposal if available
+            if self._current_proposal is not None:
+                self._nav_proposal = True
+                self._scroll_selection_into_view()
+            elif self.step_entries:
+                self._saved_worker_tabs = [t for t in self.tabs[1:] if t.id != "logs"]
+                self._nav_step = len(self.step_entries) - 1
+                self._load_historical_workers()
+                self._scroll_selection_into_view()
+        elif self._nav_proposal:
+            # At proposal → go to last history entry
+            self._nav_proposal = False
             if self.step_entries:
-                # Save current worker tabs before entering history (exclude logs)
                 self._saved_worker_tabs = [t for t in self.tabs[1:] if t.id != "logs"]
                 self._nav_step = len(self.step_entries) - 1
                 self._load_historical_workers()
@@ -1614,9 +1817,16 @@ class TUI:
                 self._load_historical_workers()
                 self._scroll_selection_into_view()
             else:
+                # Last history entry → go to proposal if available
                 self._nav_step = -1
                 self._restore_worker_tabs()
+                if self._current_proposal is not None:
+                    self._nav_proposal = True
                 self._scroll_selection_into_view()
+        elif self._nav_proposal:
+            # Proposal → back to accept/feedback
+            self._nav_proposal = False
+            self._scroll_selection_into_view()
 
     def _tab_nav_up(self, tab: _Tab):
         """Navigate up in a non-planner tab's entries."""
@@ -1659,7 +1869,18 @@ class TUI:
         entry = tab.entries[self._step_detail_idx]
         tool = entry.get("tool", "?")
         tool_color = TOOL_STYLE.get(tool, WHITE)
-        self._step_detail_title = f"{tool_color}{tool}{RESET}"
+
+        # Inline status + duration in title
+        status = entry.get("status", "")
+        duration_ms = entry.get("duration_ms", 0)
+        dur_text = f" ({duration_ms / 1000:.1f}s)" if duration_ms else ""
+        if status == "ok":
+            status_badge = f"{GREEN}● succeeded{RESET}{dur_text}"
+        else:
+            status_badge = f"{RED}● failed{RESET}{dur_text}"
+        self._step_detail_title = (
+            f"{tool_color}{tool}{RESET}  {status_badge}"
+        )
 
         parts: list[str] = []
 
@@ -1673,27 +1894,28 @@ class TUI:
             for line in lines:
                 parts.append(f"  {line}" if line else "")
 
-        # Status + Duration
-        status = entry.get("status", "")
-        duration_ms = entry.get("duration_ms", 0)
-        dur_text = f"  ({duration_ms / 1000:.1f}s)" if duration_ms else ""
-        if status == "ok":
-            add_section("Status", [f"{GREEN}● succeeded{RESET}{dur_text}"], color=YELLOW)
-        else:
-            add_section("Status", [f"{RED}● failed{RESET}{dur_text}"], color=YELLOW)
-
-        # Arguments
+        # Action Input (arguments)
         args = entry.get("args", {})
+        input_lines: list[str] = []
         if "code" in args:
-            code_lines = args["code"].splitlines()
-            add_section("Code", code_lines, color=CYAN)
+            input_lines.extend(args["code"].splitlines())
         if "query" in args:
-            add_section("Query", [args["query"]], color=CYAN)
+            input_lines.append(args["query"])
+        # Show any other args as key: value
+        for key, val in args.items():
+            if key in ("code", "query"):
+                continue
+            val_str = str(val)
+            if len(val_str) > 200:
+                val_str = val_str[:200] + "…"
+            input_lines.append(f"{DIM}{key}:{RESET} {val_str}")
+        if input_lines:
+            add_section("Action Input", input_lines, color=CYAN)
 
-        # Result
+        # Action Output (result)
         result = entry.get("result", "")
         if result:
-            add_section("Result", result.splitlines(), color=MAGENTA)
+            add_section("Action Output", result.splitlines(), color=MAGENTA)
 
         self._step_detail_text = "\n".join(parts) if parts else "  (no detail)"
         self._step_detail_scroll = min(
@@ -1856,7 +2078,7 @@ class TUI:
                     return (line_idx, line_idx + rendered - 1)
                 line_idx += rendered
             return None
-        if not (self._confirming and tab.id == "planner" and self._proposal_log_start >= 0):
+        if not (self._nav_proposal and tab.id == "planner" and self._proposal_log_start >= 0):
             return None
         start = None
         for idx, entry in enumerate(tab.log_lines):
@@ -1909,8 +2131,9 @@ class TUI:
     def _draw_confirmation(self):
         fb = "".join(self._confirm_buf)
         lbl = self._confirm_accept_label
+        cur = self._confirm_cursor
         self._write_raw('\n')
-        if self._nav_step >= 0:
+        if self._nav_step >= 0 or self._nav_proposal:
             self._write_raw(f' {DIM}○ {lbl}{RESET}\n')
             self._write_raw(f' {DIM}○ give feedback{RESET}')
         elif self._confirm_selected == 0:
@@ -1919,6 +2142,10 @@ class TUI:
         else:
             self._write_raw(f' {DIM}○ {lbl}{RESET}\n')
             self._write_raw(f' {GREEN}●{RESET} {fb}')
+            # Position terminal cursor within the text
+            chars_after = len(fb) - cur
+            if chars_after > 0:
+                self._write_raw(f'\033[{chars_after}D')
 
     # ── View toggles ────────────────────────────────────────────
 
@@ -1928,7 +2155,10 @@ class TUI:
             old_max = max(len(old_lines) - self._step_detail_avail_rows(), 0)
             old_ratio = (self._step_detail_scroll / old_max) if old_max > 0 else 0.0
             self.trace_visible = not self.trace_visible
-            self._refresh_step_detail()
+            if self._nav_proposal:
+                self._refresh_proposal_detail()
+            else:
+                self._refresh_step_detail()
             new_lines = self._build_step_detail_lines()
             new_max = max(len(new_lines) - self._step_detail_avail_rows(), 0)
             if old_max > 0 and new_max > 0:
@@ -2066,7 +2296,12 @@ class TUI:
                     base, max_w, continuation_prefix=continuation
                 )
                 nav = self._nav_step if tab.id == "planner" else tab.nav_idx
-                if is_entry and entry.step_idx == nav:
+                is_proposal_line = (
+                    self._nav_proposal and tab.id == "planner"
+                    and self._proposal_log_start >= 0
+                    and idx >= self._proposal_log_start
+                )
+                if (is_entry and entry.step_idx == nav) or is_proposal_line:
                     for wrapped in wrapped_lines:
                         lines.append(f' {GREEN}▎{RESET}{wrapped}')
                 else:
@@ -2193,7 +2428,11 @@ class TUI:
                     self._write_raw(f'{iline}\n')
             elif self.view == "input":
                 tab = self._active_tab
-                self._write_raw(f'  {BOLD}Worker Input{RESET} {DIM}(esc to return){RESET}\n')
+                status_badge = (
+                    f"{GREEN}● completed{RESET}" if tab.done
+                    else f"{CYAN}● running{RESET}"
+                )
+                self._write_raw(f'  {BOLD}Worker Input{RESET}  {status_badge} {DIM}(esc to return){RESET}\n')
                 self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
                 sections: list[str] = []
 
@@ -2207,10 +2446,6 @@ class TUI:
                     for line in lines:
                         sections.append(f"  {line}" if line else "")
 
-                status_line = (
-                    f"{GREEN}● completed{RESET}" if tab.done else f"{CYAN}● running{RESET}"
-                )
-                add_input_section("Status", [status_line], color=YELLOW)
                 add_input_section("Worker", [tab.label], color=MAGENTA)
 
                 desc = (tab.task_description or "").strip()
@@ -2251,6 +2486,14 @@ class TUI:
             sys.stdout.flush()
 
     # ── Helpers ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _approx_token_label(text: str) -> str:
+        """Return a human-friendly approximate token count like '1.6k tokens'."""
+        tokens = len(text) // 4
+        if tokens >= 1000:
+            return f"{tokens / 1000:.1f}k tokens"
+        return f"{tokens} tokens"
 
     @staticmethod
     def _style(text: str, color: str = "", bold: bool = False,

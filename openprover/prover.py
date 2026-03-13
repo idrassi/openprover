@@ -188,12 +188,14 @@ class Prover:
                  resumed: bool = False,
                  make_worker_llm=None,
                  lean_items: bool = False,
-                 lean_worker_actions: bool = False):
+                 lean_worker_actions: bool = False,
+                 history_budget: int = 0):
         self.model = model_name
         self._make_llm = make_llm
         self._make_worker_llm = make_worker_llm or make_llm
         self.lean_items = lean_items
         self.lean_worker_actions = lean_worker_actions
+        self._history_budget_override = history_budget
         self.max_steps = max_steps
         self.autonomous = autonomous
         self.verbose = verbose
@@ -204,7 +206,9 @@ class Prover:
         self.shutting_down = False
         self.step_num = 0
         self._step_idx = 0
-        self.prev_outputs: list[str] = []  # rolling window of last 3 outputs
+        self.step_history: list[dict] = []  # rolling window of last 3 steps
+        self._current_planner_result = ""
+        self._current_action_output = ""
         self.proof_text = ""
         self.resumed = resumed
 
@@ -230,14 +234,14 @@ class Prover:
         self.repo = Repo(self.work_dir / "repo")
         self.theorem_text = theorem_text
 
-        # Resume: count existing steps and restore prev_outputs
+        # Resume: count existing steps and restore step history
         if self.resumed:
             self.whiteboard = (self.work_dir / "WHITEBOARD.md").read_text()
             steps_dir = self.work_dir / "steps"
             existing = [d for d in steps_dir.iterdir()
                         if d.is_dir() and d.name.startswith("step_")]
             self.step_num = len(existing)
-            self._load_prev_outputs()
+            self._load_step_history()
         else:
             # Fresh run — write initial files
             (self.work_dir / "THEOREM.md").write_text(self.theorem_text)
@@ -262,6 +266,13 @@ class Prover:
         self.worker_llm = self._make_worker_llm(archive_dir)
         # Unified view for cost/call tracking
         self.llm = self.planner_llm
+
+        # History budget: auto-compute from planner context if not specified
+        if self._history_budget_override > 0:
+            self.history_budget = self._history_budget_override
+        else:
+            ctx = getattr(self.planner_llm, 'context_length', 200_000)
+            self.history_budget = int(ctx * 4 * 0.15)
 
         # Tool calling for workers
         self.lean_explore_service = None
@@ -342,9 +353,23 @@ class Prover:
 
         while self.step_num < self.max_steps and not self.shutting_down:
             self.step_num += 1
+            self._current_planner_result = ""
+            self._current_action_output = ""
+            self._current_step_action = ""
+            self._current_step_summary = ""
             result = self._do_step()
-            # Save prev_outputs after each step so resume can restore them
-            self._save_prev_outputs()
+            # Record history entry if planner produced output
+            if self._current_planner_result:
+                self.step_history.append({
+                    "step": self.step_num,
+                    "planner": self._current_planner_result,
+                    "action": self._current_step_action,
+                    "summary": self._current_step_summary,
+                    "output": self._current_action_output,
+                })
+                if len(self.step_history) > 3:
+                    self.step_history = self.step_history[-3:]
+            self._save_step_history()
             if result == "stop":
                 break
 
@@ -352,24 +377,34 @@ class Prover:
             self._write_discussion()
 
     def _push_output(self, text: str):
-        """Add output to the rolling window (last 3 kept)."""
+        """Store action output for the current step's history entry."""
         if text:
-            self.prev_outputs.append(text)
-            if len(self.prev_outputs) > 3:
-                self.prev_outputs = self.prev_outputs[-3:]
+            self._current_action_output = text
             self.tui.append_step_action_output(self.step_num, text)
 
-    def _save_prev_outputs(self):
-        """Persist prev_outputs to disk for resume."""
-        path = self.work_dir / "prev_outputs.json"
-        path.write_text(json.dumps(self.prev_outputs))
+    def _save_step_history(self):
+        """Persist step_history to disk for resume."""
+        path = self.work_dir / "step_history.json"
+        path.write_text(json.dumps(self.step_history))
 
-    def _load_prev_outputs(self):
-        """Restore prev_outputs from disk."""
-        path = self.work_dir / "prev_outputs.json"
+    def _load_step_history(self):
+        """Restore step_history from disk (with backward compat for prev_outputs.json)."""
+        path = self.work_dir / "step_history.json"
         if path.exists():
             try:
-                self.prev_outputs = json.loads(path.read_text())
+                self.step_history = json.loads(path.read_text())
+                return
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Backward compat: convert old prev_outputs.json (list of strings)
+        old_path = self.work_dir / "prev_outputs.json"
+        if old_path.exists():
+            try:
+                old = json.loads(old_path.read_text())
+                self.step_history = [
+                    {"step": 0, "planner": "", "action": "", "summary": "",
+                     "output": o} for o in old
+                ]
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -419,13 +454,14 @@ class Prover:
         prompt = prompts.format_planner_prompt(
             whiteboard=self.whiteboard,
             repo_index=repo_index,
-            prev_outputs=list(self.prev_outputs),
+            step_history=list(self.step_history),
             step_num=self.step_num,
             max_steps=self.max_steps,
             parallelism=self.parallelism,
             has_lean_theorem=bool(self.lean_theorem_text),
             has_proof_md=(self.work_dir / "PROOF.md").exists(),
             has_proof_lean=(self.work_dir / "PROOF.lean").exists(),
+            history_budget=self.history_budget,
         )
 
         # Planner LLM call (with up to 2 retries on parse failure)
@@ -434,7 +470,6 @@ class Prover:
             isolation=self.isolation,
             allow_give_up=self.step_num >= self.max_steps * self.give_up_ratio,
             lean_mode=self.mode,
-            num_sorries=self.lean_theorem.num_sorries if self.lean_theorem else 0,
             lean_items=self.lean_items,
         )
         plan = None
@@ -537,6 +572,11 @@ class Prover:
         action = plan.get("action", "")
         summary = plan.get("summary", "")
         logger.info("Action: %s — %s", action, summary)
+
+        # Record planner output for step history
+        self._current_planner_result = last_resp["result"]
+        self._current_step_action = action
+        self._current_step_summary = summary
 
         # Save planner output
         self._save_step(step_dir, plan)
@@ -705,7 +745,7 @@ class Prover:
         return self._check_completion(feedback)
 
     def _handle_submit_lean_proof(self, plan: dict, step_dir: Path) -> str:
-        """Handle submit_lean_proof — formal Lean proof blocks."""
+        """Handle submit_lean_proof — submit a lean repo item as the formal proof."""
         lean_proof_slug = plan.get("lean_proof_slug", "")
 
         if not lean_proof_slug:
@@ -713,9 +753,9 @@ class Prover:
             self._push_output("submit_lean_proof rejected: provide lean_proof_slug.")
             return "continue"
 
-        if not self.lean_theorem:
-            self.tui.log("submit_lean_proof: no THEOREM.lean configured", color="red")
-            self._push_output("submit_lean_proof rejected: no THEOREM.lean configured.")
+        if not self.lean_work_dir:
+            self.tui.log("submit_lean_proof: no Lean project configured", color="red")
+            self._push_output("submit_lean_proof rejected: no Lean project configured.")
             return "continue"
 
         content = self.repo.read_item(lean_proof_slug)
@@ -724,17 +764,8 @@ class Prover:
             self._push_output(f"submit_lean_proof rejected: repo item [[{lean_proof_slug}]] not found.")
             return "continue"
 
-        # Parse blocks and optional context from the item content
-        blocks, context = self._parse_lean_proof_item(content)
-        logger.info("Lean proof from [[%s]]: %d block(s)", lean_proof_slug, len(blocks))
-
-        try:
-            proof_text = self.lean_theorem.assemble_proof(blocks, context)
-        except ValueError as e:
-            self.tui.log(f"Assembly error: {e}", color="red")
-            logger.warning("Assembly error: %s", e)
-            self._push_output(f"submit_lean_proof assembly error: {e}")
-            return "continue"
+        proof_text = content
+        logger.info("Lean proof from [[%s]]: %d chars", lean_proof_slug, len(proof_text))
 
         # Write and verify
         proof_path = self.lean_work_dir.make_file("proof-attempt", proof_text)
@@ -793,45 +824,6 @@ class Prover:
 
         self._push_output(feedback)
         return "continue"
-
-    @staticmethod
-    def _parse_lean_proof_item(content: str) -> tuple[list[str], str]:
-        """Parse a lean proof repo item into (blocks, context).
-
-        Format:
-            --- CONTEXT ---
-            helper definitions
-            --- BLOCK ---
-            replacement for sorry #0
-            --- BLOCK ---
-            replacement for sorry #1
-
-        If no delimiters, the entire content is treated as a single block.
-        """
-        context = ""
-        # Check for delimiter-based format
-        if "--- BLOCK ---" in content:
-            parts = re.split(r'^---\s*BLOCK\s*---\s*$', content, flags=re.MULTILINE)
-            first = parts[0]
-            # Check if first part has context delimiter
-            if "--- CONTEXT ---" in first:
-                ctx_parts = re.split(r'^---\s*CONTEXT\s*---\s*$', first, flags=re.MULTILINE)
-                context = ctx_parts[-1].strip()
-                # Anything before --- CONTEXT --- is ignored (e.g. summary line)
-            else:
-                # First part before any BLOCK might be context or empty
-                first_stripped = first.strip()
-                if first_stripped:
-                    context = first_stripped
-            blocks = [p.strip() for p in parts[1:]]
-        elif "--- CONTEXT ---" in content:
-            parts = re.split(r'^---\s*CONTEXT\s*---\s*$', content, flags=re.MULTILINE)
-            context = parts[-1].strip() if len(parts) > 1 else ""
-            blocks = [parts[0].strip()] if parts[0].strip() else []
-        else:
-            # No delimiters — entire content is a single block
-            blocks = [content.strip()]
-        return blocks, context
 
     def _handle_give_up(self) -> str:
         if self.step_num < self.max_steps * max(self.give_up_ratio, 0.8):

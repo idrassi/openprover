@@ -28,7 +28,7 @@ def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
                      isolation: bool, autonomous: bool, mode: str,
                      lean_project_dir: Path | None, lean_items: bool,
                      lean_worker_actions: bool, provider_url: str,
-                     answer_reserve: int):
+                     answer_reserve: int, history_budget: int):
     """Save run configuration so it can be restored on resume."""
     lines = [
         f'planner_model = "{planner_model}"',
@@ -44,6 +44,7 @@ def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
         f'lean_worker_actions = {str(lean_worker_actions).lower()}',
         f'provider_url = "{provider_url}"',
         f'answer_reserve = {answer_reserve}',
+        f'history_budget = {history_budget}',
     ]
     (work_dir / RUN_CONFIG_FILE).write_text("\n".join(lines) + "\n")
 
@@ -231,6 +232,7 @@ def _cmd_prove():
     parser.add_argument("-P", "--parallelism", type=int, default=1, help="Max parallel workers per spawn step (default: 1)")
     parser.add_argument("--give-up-after", type=float, default=0.5, metavar="RATIO", help="Fraction of steps before give_up action is allowed (default: 0.5)")
     parser.add_argument("--answer-reserve", type=int, default=4096, metavar="TOKENS", help="Tokens reserved for answer after thinking (qed-nano, default: 4096)")
+    parser.add_argument("--history-budget", type=int, default=0, metavar="CHARS", help="Char budget for planner history (default: auto from model context)")
     parser.add_argument("--headless", action="store_true", help="Non-interactive mode (logs to stdout, errors to stderr)")
     parser.add_argument("--verbose", action="store_true", help="Show full LLM responses")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -302,6 +304,8 @@ def _cmd_prove():
                 args.provider_url = saved.get("provider_url", args.provider_url)
             if not _cli_flag_given("--answer-reserve"):
                 args.answer_reserve = saved.get("answer_reserve", args.answer_reserve)
+            if not _cli_flag_given("--history-budget"):
+                args.history_budget = saved.get("history_budget", args.history_budget)
 
     # Lean flag validation (for fresh starts with explicit flags)
     if not resuming:
@@ -392,6 +396,7 @@ def _cmd_prove():
             lean_worker_actions=args.lean_worker_actions,
             provider_url=args.provider_url,
             answer_reserve=args.answer_reserve,
+            history_budget=args.history_budget,
         )
 
     prover = Prover(
@@ -414,6 +419,7 @@ def _cmd_prove():
         make_worker_llm=make_worker_llm,
         lean_items=args.lean_items,
         lean_worker_actions=args.lean_worker_actions,
+        history_budget=args.history_budget,
     )
 
     # Clear the early status line before TUI takes over

@@ -337,6 +337,12 @@ def _cmd_prove():
     else:
         tui = TUI()
 
+    # Show early status so the user sees something immediately
+    if not args.headless:
+        label = "Resuming" if resuming else "Starting"
+        _model_hint = planner_model if planner_model == worker_model else f"{planner_model}/{worker_model}"
+        print(f"  {label} openprover ({_model_hint})…", end="", flush=True)
+
     # Resolve --lean-worker-actions default
     if args.lean_worker_actions is None:
         args.lean_worker_actions = (args.lean_project is not None and worker_model in TOOL_CAPABLE_MODELS)
@@ -348,6 +354,8 @@ def _cmd_prove():
         # Auto-fetch Lean Explore data if not available
         from .lean_data import is_lean_data_available, fetch_lean_data
         if not is_lean_data_available():
+            if not args.headless:
+                print(" fetching lean data…", end="", flush=True)
             if not fetch_lean_data():
                 print("Warning: lean_search will not be available")
 
@@ -407,6 +415,10 @@ def _cmd_prove():
         lean_items=args.lean_items,
         lean_worker_actions=args.lean_worker_actions,
     )
+
+    # Clear the early status line before TUI takes over
+    if not args.headless:
+        print("\r\033[K", end="", flush=True)
 
     # Inspect mode: browse history without running steps
     if inspect_mode:

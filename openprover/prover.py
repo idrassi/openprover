@@ -230,13 +230,14 @@ class Prover:
         self.repo = Repo(self.work_dir / "repo")
         self.theorem_text = theorem_text
 
-        # Resume: count existing steps
+        # Resume: count existing steps and restore prev_outputs
         if self.resumed:
             self.whiteboard = (self.work_dir / "WHITEBOARD.md").read_text()
             steps_dir = self.work_dir / "steps"
             existing = [d for d in steps_dir.iterdir()
                         if d.is_dir() and d.name.startswith("step_")]
             self.step_num = len(existing)
+            self._load_prev_outputs()
         else:
             # Fresh run — write initial files
             (self.work_dir / "THEOREM.md").write_text(self.theorem_text)
@@ -333,6 +334,7 @@ class Prover:
         }
 
         if self.resumed:
+            self._load_history()
             self.tui.log(
                 f"Resuming from step {self.step_num}/{self.max_steps}",
                 color="cyan",
@@ -341,10 +343,9 @@ class Prover:
         while self.step_num < self.max_steps and not self.shutting_down:
             self.step_num += 1
             result = self._do_step()
+            # Save prev_outputs after each step so resume can restore them
+            self._save_prev_outputs()
             if result == "stop":
-                break
-            if result == "pause":
-                self.tui.log("Paused.", color="yellow")
                 break
 
         if not self.shutting_down and self.tui.step_entries:
@@ -357,6 +358,20 @@ class Prover:
             if len(self.prev_outputs) > 3:
                 self.prev_outputs = self.prev_outputs[-3:]
             self.tui.append_step_action_output(self.step_num, text)
+
+    def _save_prev_outputs(self):
+        """Persist prev_outputs to disk for resume."""
+        path = self.work_dir / "prev_outputs.json"
+        path.write_text(json.dumps(self.prev_outputs))
+
+    def _load_prev_outputs(self):
+        """Restore prev_outputs from disk."""
+        path = self.work_dir / "prev_outputs.json"
+        if path.exists():
+            try:
+                self.prev_outputs = json.loads(path.read_text())
+            except (json.JSONDecodeError, TypeError):
+                pass
 
     def _setup_logging(self):
         """Configure file logging to trace.log in the run directory."""
@@ -379,7 +394,7 @@ class Prover:
         root.addHandler(handler)
 
     def _do_step(self) -> str:
-        """Execute one planner step. Returns 'continue', 'stop', 'pause'."""
+        """Execute one planner step. Returns 'continue' or 'stop'."""
         logger.info("Step %d/%d", self.step_num, self.max_steps)
         self.autonomous = self.tui.autonomous
 
@@ -389,8 +404,6 @@ class Prover:
             if action == "quit":
                 self.shutting_down = True
                 return "stop"
-            if action == "pause":
-                return "pause"
             if action == "summarize":
                 pass  # TODO: on-demand summary
 
@@ -576,7 +589,7 @@ class Prover:
         """Show proposal and get user confirmation when not in autonomous mode.
 
         Returns None if the action is approved (proceed with execution),
-        or a loop control string ('continue', 'stop', 'pause') if rejected/quit.
+        or a loop control string ('continue', 'stop') if rejected/quit.
         """
         self.autonomous = self.tui.autonomous
         if self.autonomous:
@@ -595,8 +608,6 @@ class Prover:
             if user_resp == "q":
                 self.shutting_down = True
                 return "stop"
-            if user_resp == "p":
-                return "pause"
             if user_resp == "a":
                 self.autonomous = True
                 self.tui.log("  autonomous mode", dim=True)
@@ -1604,7 +1615,7 @@ class Prover:
             if not toml_file.exists():
                 continue
 
-            plan = prompts.parse_planner_toml(toml_file.read_text())
+            plan = prompts.parse_saved_step_toml(toml_file.read_text())
             if plan is None:
                 continue
 

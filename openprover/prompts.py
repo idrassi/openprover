@@ -609,6 +609,16 @@ def parse_planner_toml(text: str) -> dict | None:
     return parsed
 
 
+def parse_saved_step_toml(text: str) -> dict | None:
+    """Parse a saved planner.toml file (no OPENPROVER_ACTION tags)."""
+    if tomllib is None:
+        return _parse_toml_minimal(text)
+    try:
+        return tomllib.loads(text)
+    except Exception:
+        return _parse_toml_minimal(text)
+
+
 def _parse_toml_minimal(text: str) -> dict | None:
     """Minimal TOML-ish parser for our specific format.
 

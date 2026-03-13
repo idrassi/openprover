@@ -2,6 +2,7 @@
 
 import argparse
 import atexit
+import re
 import signal
 import sys
 from datetime import datetime
@@ -13,6 +14,60 @@ from .prover import Prover, slugify
 from .tui import TUI, HeadlessTUI
 
 SUBCOMMANDS = {"inspect", "fetch-lean-data"}
+
+RUN_CONFIG_FILE = "run_config.toml"
+
+
+def _cli_flag_given(*flags: str) -> bool:
+    """Check if any of the given CLI flags were explicitly passed by the user."""
+    return any(f in sys.argv for f in flags)
+
+
+def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
+                     max_steps: int, parallelism: int, give_up_ratio: float,
+                     isolation: bool, autonomous: bool, mode: str,
+                     lean_project_dir: Path | None, lean_items: bool,
+                     lean_worker_actions: bool, provider_url: str,
+                     answer_reserve: int):
+    """Save run configuration so it can be restored on resume."""
+    lines = [
+        f'planner_model = "{planner_model}"',
+        f'worker_model = "{worker_model}"',
+        f'max_steps = {max_steps}',
+        f'parallelism = {parallelism}',
+        f'give_up_ratio = {give_up_ratio}',
+        f'isolation = {str(isolation).lower()}',
+        f'autonomous = {str(autonomous).lower()}',
+        f'mode = "{mode}"',
+        f'lean_project_dir = "{lean_project_dir}"' if lean_project_dir else 'lean_project_dir = ""',
+        f'lean_items = {str(lean_items).lower()}',
+        f'lean_worker_actions = {str(lean_worker_actions).lower()}',
+        f'provider_url = "{provider_url}"',
+        f'answer_reserve = {answer_reserve}',
+    ]
+    (work_dir / RUN_CONFIG_FILE).write_text("\n".join(lines) + "\n")
+
+
+def _load_run_config(work_dir: Path) -> dict | None:
+    """Load saved run configuration, or None if not found."""
+    path = work_dir / RUN_CONFIG_FILE
+    if not path.exists():
+        return None
+    text = path.read_text()
+    config = {}
+    for m in re.finditer(r'^(\w+)\s*=\s*(.+)$', text, re.MULTILINE):
+        key, val = m.group(1), m.group(2).strip()
+        if val.startswith('"') and val.endswith('"'):
+            config[key] = val[1:-1]
+        elif val == "true":
+            config[key] = True
+        elif val == "false":
+            config[key] = False
+        elif "." in val:
+            config[key] = float(val)
+        else:
+            config[key] = int(val)
+    return config
 
 
 def main():
@@ -204,6 +259,50 @@ def _cmd_prove():
     (work_dir, theorem_text, lean_theorem_text, proof_md_text,
      mode, resuming, read_only) = _resolve_inputs(parser, args)
 
+    # Map short model names to HuggingFace model IDs
+    HF_MODEL_MAP = {
+        "qed-nano": "lm-provers/QED-Nano",
+        "qwen3-4b": "Qwen/Qwen3-4B-Thinking-2507",
+        "minimax-m2.5": "MiniMaxAI/MiniMax-M2.5",
+    }
+    VLLM_MODELS = {"minimax-m2.5"}  # served via vLLM (standard OpenAI API)
+    CLAUDE_MODELS = {"sonnet", "opus"}
+    TOOL_CAPABLE_MODELS = VLLM_MODELS | CLAUDE_MODELS
+
+    # ── On resume, load saved config and apply as defaults ──
+    if resuming:
+        saved = _load_run_config(work_dir)
+        if saved:
+            # Restore settings from saved config; CLI flags override
+            if not args.planner_model and not _cli_flag_given("--model"):
+                args.model = saved.get("planner_model", args.model)
+            if not args.planner_model:
+                args.planner_model = saved.get("planner_model")
+            if not args.worker_model:
+                args.worker_model = saved.get("worker_model")
+            if not _cli_flag_given("--max-steps"):
+                args.max_steps = saved.get("max_steps", args.max_steps)
+            if not _cli_flag_given("-P", "--parallelism"):
+                args.parallelism = saved.get("parallelism", args.parallelism)
+            if not _cli_flag_given("--give-up-after"):
+                args.give_up_after = saved.get("give_up_ratio", args.give_up_after)
+            if not _cli_flag_given("--isolation", "--no-isolation"):
+                args.isolation = saved.get("isolation", args.isolation)
+            if not _cli_flag_given("--autonomous"):
+                args.autonomous = saved.get("autonomous", args.autonomous)
+            if not _cli_flag_given("--lean-project"):
+                lp = saved.get("lean_project_dir", "")
+                if lp:
+                    args.lean_project = Path(lp)
+            if not _cli_flag_given("--lean-items", "--no-lean-items"):
+                args.lean_items = saved.get("lean_items", args.lean_items)
+            if not _cli_flag_given("--lean-worker-actions", "--no-lean-worker-actions"):
+                args.lean_worker_actions = saved.get("lean_worker_actions", args.lean_worker_actions)
+            if not _cli_flag_given("--provider-url"):
+                args.provider_url = saved.get("provider_url", args.provider_url)
+            if not _cli_flag_given("--answer-reserve"):
+                args.answer_reserve = saved.get("answer_reserve", args.answer_reserve)
+
     # Lean flag validation (for fresh starts with explicit flags)
     if not resuming:
         if args.lean_theorem and not args.lean_project:
@@ -238,16 +337,6 @@ def _cmd_prove():
     else:
         tui = TUI()
 
-    # Map short model names to HuggingFace model IDs
-    HF_MODEL_MAP = {
-        "qed-nano": "lm-provers/QED-Nano",
-        "qwen3-4b": "Qwen/Qwen3-4B-Thinking-2507",
-        "minimax-m2.5": "MiniMaxAI/MiniMax-M2.5",
-    }
-    VLLM_MODELS = {"minimax-m2.5"}  # served via vLLM (standard OpenAI API)
-    CLAUDE_MODELS = {"sonnet", "opus"}
-    TOOL_CAPABLE_MODELS = VLLM_MODELS | CLAUDE_MODELS
-
     # Resolve --lean-worker-actions default
     if args.lean_worker_actions is None:
         args.lean_worker_actions = (args.lean_project is not None and worker_model in TOOL_CAPABLE_MODELS)
@@ -276,6 +365,26 @@ def _cmd_prove():
         return _make_client(worker_model, archive_dir)
 
     model_label = planner_model if planner_model == worker_model else f"{planner_model}/{worker_model}"
+
+    # Save config on fresh start
+    if not resuming:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        _save_run_config(
+            work_dir,
+            planner_model=planner_model,
+            worker_model=worker_model,
+            max_steps=args.max_steps,
+            parallelism=args.parallelism,
+            give_up_ratio=args.give_up_after,
+            isolation=args.isolation,
+            autonomous=args.autonomous,
+            mode=mode,
+            lean_project_dir=args.lean_project,
+            lean_items=args.lean_items,
+            lean_worker_actions=args.lean_worker_actions,
+            provider_url=args.provider_url,
+            answer_reserve=args.answer_reserve,
+        )
 
     prover = Prover(
         work_dir=work_dir,

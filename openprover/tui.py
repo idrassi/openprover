@@ -65,8 +65,6 @@ HELP_TEXT = f"""\
     enter       confirm or view step detail
     esc         close detail / deselect
     s           summarize progress
-    p           pause (resume with --run-dir)
-    q           quit
 
   {DIM}In autonomous mode all keys are instant.{RESET}
   {DIM}Press ? or enter to dismiss.{RESET}
@@ -1093,11 +1091,8 @@ class TUI:
             elif self._active_tab.scroll_offset > 0:
                 self._active_tab.scroll_offset = 0
                 self._redraw()
-        elif self.autonomous and ch in ('q', 'p', 's'):
-            self.pending_action = {
-                'q': 'quit', 'p': 'pause',
-                's': 'summarize',
-            }[ch]
+        elif self.autonomous and ch == 's':
+            self.pending_action = 'summarize'
 
     def _open_selected_step_detail(self):
         if self._nav_step < 0:
@@ -1348,7 +1343,7 @@ class TUI:
                     continue
 
                 if (self._nav_step == -1 and self._confirm_selected == 0
-                        and ch in ('s', 'p', 'q')):
+                        and ch == 's'):
                     return ch
 
                 if ch == 'a' and self._confirm_selected == 0:
@@ -1501,9 +1496,6 @@ class TUI:
                 if can_toggle and ch in ('r', 'w', '?'):
                     self._process_key(ch)
                     continue
-
-                if self._confirm_selected == 0 and ch == 'q':
-                    return "q"
 
                 if ch.isprintable():
                     if self._confirm_selected == 0:

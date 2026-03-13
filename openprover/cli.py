@@ -218,7 +218,7 @@ def _cmd_prove():
         prog="openprover",
         description="Theorem prover powered by language models",
     )
-    model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b", "minimax-m2.5"]
+    model_choices = ["sonnet", "opus", "minimax-m2.5"]
     parser.add_argument("run_dir", nargs="?", help="Working directory (resumes if it contains an existing run)")
     parser.add_argument("--theorem", metavar="FILE", help="Path to theorem statement file (.md)")
     parser.add_argument("--model", default="sonnet", choices=model_choices, help="Model to use for both planner and worker (default: sonnet)")
@@ -231,7 +231,7 @@ def _cmd_prove():
     parser.add_argument("--isolation", action=argparse.BooleanOptionalAction, default=True, help="Disable web searches (no literature_search action)")
     parser.add_argument("-P", "--parallelism", type=int, default=1, help="Max parallel workers per spawn step (default: 1)")
     parser.add_argument("--give-up-after", type=float, default=0.5, metavar="RATIO", help="Fraction of steps before give_up action is allowed (default: 0.5)")
-    parser.add_argument("--answer-reserve", type=int, default=4096, metavar="TOKENS", help="Tokens reserved for answer after thinking (qed-nano, default: 4096)")
+    parser.add_argument("--answer-reserve", type=int, default=4096, metavar="TOKENS", help="Tokens reserved for answer after thinking (default: 4096)")
     parser.add_argument("--history-budget", type=int, default=0, metavar="CHARS", help="Char budget for planner history (default: auto from model context)")
     parser.add_argument("--headless", action="store_true", help="Non-interactive mode (logs to stdout, errors to stderr)")
     parser.add_argument("--verbose", action="store_true", help="Show full LLM responses")
@@ -263,8 +263,6 @@ def _cmd_prove():
 
     # Map short model names to HuggingFace model IDs
     HF_MODEL_MAP = {
-        "qed-nano": "lm-provers/QED-Nano",
-        "qwen3-4b": "Qwen/Qwen3-4B-Thinking-2507",
         "minimax-m2.5": "MiniMaxAI/MiniMax-M2.5",
     }
     VLLM_MODELS = {"minimax-m2.5"}  # served via vLLM (standard OpenAI API)
@@ -331,7 +329,7 @@ def _cmd_prove():
     worker_model = args.worker_model or args.model
 
     # HF-backed models have no web search capability — force isolation
-    hf_models = {"qed-nano", "qwen3-4b", "minimax-m2.5"}
+    hf_models = {"minimax-m2.5"}
     if planner_model in hf_models and not args.isolation:
         args.isolation = True
 

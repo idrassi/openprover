@@ -53,7 +53,7 @@ def _run_problem(problem_name: str, statement: str, lean_dir: Path,
             cmd.extend(["--lean-project", str(lean_dir)])
             cmd.extend(["--lean-theorem", str(lean_theorem_path)])
 
-    hf_models = {"qed-nano", "qwen3-4b", "minimax-m2.5"}
+    hf_models = {"minimax-m2.5"}
     used_models = {args.model, args.planner_model, args.worker_model} - {None}
     if used_models & hf_models:
         cmd.extend(["--provider-url", args.provider_url])
@@ -144,7 +144,7 @@ def main():
                         help="Number of concurrent openprover instances (default: 1)")
     parser.add_argument("-P", "--parallelism", type=int, default=1,
                         help="Max parallel workers per spawn step inside openprover (default: 1)")
-    model_choices = ["sonnet", "opus", "qed-nano", "qwen3-4b", "minimax-m2.5"]
+    model_choices = ["sonnet", "opus", "minimax-m2.5"]
     parser.add_argument("--model", default="sonnet", choices=model_choices)
     parser.add_argument("--planner-model", choices=model_choices, default=None,
                         help="Override model for planner (defaults to --model)")
@@ -230,7 +230,7 @@ def main():
                 print(f"Warning: Lean theorem not found at {lean_theorem_path}."
                       " Running without formal verification.", file=sys.stderr)
 
-        hf_models = {"qed-nano", "qwen3-4b", "minimax-m2.5"}
+        hf_models = {"minimax-m2.5"}
         used_models = {args.model, args.planner_model, args.worker_model} - {None}
         if used_models & hf_models:
             cmd.extend(["--provider-url", args.provider_url])

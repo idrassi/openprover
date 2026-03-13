@@ -45,8 +45,8 @@ def _extract_sse_data_str(line: str) -> str | None:
 def _split_think_tags(text: str) -> tuple[str, str]:
     """Split thinking from model output at </think> boundary.
 
-    QED-Nano starts thinking immediately (no <think> tag) and ends with
-    </think> before the answer. Also handles <think>...</think> format.
+    Handles models that start thinking immediately (no <think> tag) and end
+    with </think> before the answer. Also handles <think>...</think> format.
 
     Returns (result_text, thinking_text). If no </think> found,
     returns (original_text, "").
@@ -449,8 +449,6 @@ class LLMClient:
 
 
 MODEL_CONTEXT_LENGTHS = {
-    "lm-provers/QED-Nano": 49152,
-    "Qwen/Qwen3-4B-Thinking-2507": 32768,
     "MiniMaxAI/MiniMax-M2.5": 196608,
 }
 

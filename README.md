@@ -97,7 +97,7 @@ openprover examples/addition.md \
 | `--provider-url` | `http://localhost:8000` | Server URL for local models |
 | `--answer-reserve` | `4096` | Tokens reserved for answer after thinking (local models) |
 
-Available models: `sonnet`, `opus`, `qed-nano`, `qwen3-4b`, `minimax-m2.5`
+Available models: `sonnet`, `opus`, `minimax-m2.5`
 
 ### TUI controls
 

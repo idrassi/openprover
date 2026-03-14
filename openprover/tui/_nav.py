@@ -87,7 +87,8 @@ class NavMixin:
         self.view = "step_detail"
 
     def _selection_render_range(self, tab: _Tab) -> tuple[int, int] | None:
-        max_w = max(self.cols - 4, 20)
+        override = self._main_lines_max_w()
+        max_w = override if override is not None else max(self.cols - 4, 20)
         planner_live_start = self._planner_live_start(tab)
         line_idx = 0
         nav = self._nav_step if tab.id == "planner" else tab.nav_idx
@@ -126,7 +127,7 @@ class NavMixin:
         if not self._main_visible:
             return
         tab = self._active_tab
-        lines = self._build_main_lines(tab)
+        lines = self._build_main_lines(tab, max_w_override=self._main_lines_max_w())
         if not lines:
             tab.scroll_offset = 0
             return
@@ -154,6 +155,12 @@ class NavMixin:
         if tab.scroll_offset > max_off:
             tab.scroll_offset = max_off
 
+    def _main_lines_max_w(self) -> int | None:
+        """Return max_w_override for _build_main_lines based on current view."""
+        if self.view == "whiteboard_split":
+            return max(self.cols // 2 - 1 - 4, 10)
+        return None
+
     def _max_scroll_offset(self, lines: list[str], tab: _Tab | None = None) -> int:
         """Max scroll offset accounting for scroll indicator row."""
         avail = self._main_avail_rows(tab)
@@ -162,15 +169,35 @@ class NavMixin:
         # When scrolled, indicator takes 1 row, so only avail-1 content rows
         return len(lines) - avail + 1
 
+    def _wb_avail_rows(self) -> int:
+        """Available rows for whiteboard content (full view)."""
+        cs = self._content_start
+        # 2 header lines: title + separator
+        return max(self.rows - cs + 1 - 2, 1)
+
+    def _wb_max_scroll(self, lines: list[str]) -> int:
+        avail = self._wb_avail_rows()
+        if len(lines) <= avail:
+            return 0
+        return len(lines) - avail + 1
+
     def _scroll_up(self):
         if self.view == "step_detail":
             page = max(self._step_detail_avail_rows() - 1, 1)
             self._step_detail_scroll = max(self._step_detail_scroll - page, 0)
             self._redraw()
             return
+        if self.view == "whiteboard":
+            avail = self._wb_avail_rows()
+            page = max(avail - 1, 1)
+            lines = self._build_whiteboard_lines(max(self.cols - 4, 20))
+            max_off = self._wb_max_scroll(lines)
+            self.wb_scroll_offset = min(self.wb_scroll_offset + page, max_off)
+            self._redraw()
+            return
         tab = self._active_tab
         page = max(self._main_avail_rows(tab) - 1, 1)
-        lines = self._build_main_lines(tab)
+        lines = self._build_main_lines(tab, max_w_override=self._main_lines_max_w())
         max_off = self._max_scroll_offset(lines, tab)
         tab.scroll_offset = min(tab.scroll_offset + page, max_off)
         self._redraw()
@@ -180,6 +207,12 @@ class NavMixin:
             page = max(self._step_detail_avail_rows() - 1, 1)
             max_scroll = self._step_detail_max_scroll()
             self._step_detail_scroll = min(self._step_detail_scroll + page, max_scroll)
+            self._redraw()
+            return
+        if self.view == "whiteboard":
+            avail = self._wb_avail_rows()
+            page = max(avail - 1, 1)
+            self.wb_scroll_offset = max(self.wb_scroll_offset - page, 0)
             self._redraw()
             return
         tab = self._active_tab
@@ -192,8 +225,14 @@ class NavMixin:
             self._step_detail_scroll = max(self._step_detail_scroll - n, 0)
             self._redraw()
             return
+        if self.view == "whiteboard":
+            lines = self._build_whiteboard_lines(max(self.cols - 4, 20))
+            max_off = self._wb_max_scroll(lines)
+            self.wb_scroll_offset = min(self.wb_scroll_offset + n, max_off)
+            self._redraw()
+            return
         tab = self._active_tab
-        lines = self._build_main_lines(tab)
+        lines = self._build_main_lines(tab, max_w_override=self._main_lines_max_w())
         max_off = self._max_scroll_offset(lines, tab)
         tab.scroll_offset = min(tab.scroll_offset + n, max_off)
         self._redraw()
@@ -202,6 +241,10 @@ class NavMixin:
         if self.view == "step_detail":
             max_scroll = self._step_detail_max_scroll()
             self._step_detail_scroll = min(self._step_detail_scroll + n, max_scroll)
+            self._redraw()
+            return
+        if self.view == "whiteboard":
+            self.wb_scroll_offset = max(self.wb_scroll_offset - n, 0)
             self._redraw()
             return
         tab = self._active_tab

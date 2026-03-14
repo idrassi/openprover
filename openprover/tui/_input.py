@@ -98,6 +98,9 @@ class InputMixin:
                         if ch in ('\n', '\r') and (
                             self.view not in ("main", "whiteboard_split")
                             or self._active_tab.scroll_offset > 0
+                            or self._active_tab.nav_idx >= 0
+                            or self._nav_step >= 0
+                            or self._nav_proposal
                         ):
                             self._process_key(ch)
                             i += 1
@@ -633,11 +636,12 @@ class InputMixin:
             return
 
         tab = self._active_tab
-        old_lines = self._build_main_lines(tab)
+        max_w = self._main_lines_max_w()
+        old_lines = self._build_main_lines(tab, max_w_override=max_w)
         old_max_off = self._max_scroll_offset(old_lines, tab)
         old_ratio = (tab.scroll_offset / old_max_off) if old_max_off > 0 else 0.0
         self.trace_visible = not self.trace_visible
-        new_lines = self._build_main_lines(tab)
+        new_lines = self._build_main_lines(tab, max_w_override=max_w)
         new_max_off = self._max_scroll_offset(new_lines, tab)
         if old_max_off > 0 and new_max_off > 0:
             tab.scroll_offset = int(round(old_ratio * new_max_off))

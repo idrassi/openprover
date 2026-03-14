@@ -268,7 +268,7 @@ class RenderMixin:
         right_w = self.cols - left_w - 1
         left_max_w = max(left_w - 4, 10)
         left_lines = self._build_main_lines(tab, max_w_override=left_max_w)
-        right_lines = self._build_whiteboard_lines(max(right_w - 2, 10))
+        all_right_lines = self._build_whiteboard_lines(max(right_w - 2, 10))
         sep = f'{DIM}│{RESET}'
 
         confirming = (self._confirming and not self._browsing
@@ -276,6 +276,19 @@ class RenderMixin:
         spinner_active = (tab.streaming and tab.spinner_label
                           and not self._has_visible_stream_content(tab))
         total_rows = self.rows - cs + 1
+
+        # Right column: whiteboard viewport
+        if len(all_right_lines) > total_rows:
+            wb_max = len(all_right_lines) - total_rows + 1
+            if self.wb_scroll_offset > wb_max:
+                self.wb_scroll_offset = wb_max
+            wb_visible = total_rows - 1 if len(all_right_lines) > total_rows else total_rows
+            wb_end = len(all_right_lines) - self.wb_scroll_offset
+            wb_start = max(wb_end - wb_visible, 0)
+            right_lines = all_right_lines[wb_start:wb_end]
+        else:
+            self.wb_scroll_offset = 0
+            right_lines = all_right_lines
 
         # Left column: content viewport
         avail = self._main_avail_rows(tab)
@@ -415,8 +428,26 @@ class RenderMixin:
                 self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}(esc to return){RESET}\n')
                 self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
                 max_w = max(self.cols - 4, 20)
-                for iline in self._build_whiteboard_lines(max_w):
+                wb_lines = self._build_whiteboard_lines(max_w)
+                avail = self._wb_avail_rows()
+                max_off = self._wb_max_scroll(wb_lines)
+                if self.wb_scroll_offset > max_off:
+                    self.wb_scroll_offset = max_off
+                visible = avail - 1 if len(wb_lines) > avail else avail
+                wb_end = len(wb_lines) - self.wb_scroll_offset
+                wb_start = max(wb_end - visible, 0)
+                for iline in wb_lines[wb_start:wb_end]:
                     self._write_raw(f'{iline}\n')
+                above = wb_start
+                below = self.wb_scroll_offset
+                if above > 0 or below > 0:
+                    parts = []
+                    if above > 0:
+                        parts.append(f'↑ {above} above')
+                    if below > 0:
+                        parts.append(f'↓ {below} below')
+                    indicator = f' {DIM}{" · ".join(parts)}{RESET}'
+                    self._write_raw(f'\033[{self.rows};1H\033[2K{indicator}')
             # whiteboard_split handled by _redraw_split above
             elif self.view == "input":
                 tab = self._active_tab

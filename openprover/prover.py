@@ -985,6 +985,7 @@ class Prover:
         self.whiteboard = wb
         (self.work_dir / "WHITEBOARD.md").write_text(self.whiteboard)
         self.tui.whiteboard = self.whiteboard
+        self.tui.wb_scroll_offset = 0
         self.tui.log("Whiteboard updated", color="yellow")
         return "continue"
 
@@ -1208,6 +1209,7 @@ class Prover:
             # Single-turn path: Claude CLI (with or without MCP) or non-vLLM
             # When MCP is configured, Claude CLI handles tool calling internally.
             def _tool_start_cb(name, tool_input):
+                logger.info("[%s] %s: starting", worker_id, name)
                 self.tui.start_worker_action(worker_id, name, tool_input)
 
             def _tool_cb(name, tool_input, result, status, duration_ms=0):
@@ -1319,6 +1321,7 @@ class Prover:
                         except json.JSONDecodeError:
                             tool_args = {"raw": tc["function"]["arguments"]}
 
+                        logger.info("[%s] %s: starting", worker_id, tool_name)
                         self.tui.start_worker_action(worker_id, tool_name, tool_args)
                         t0 = time.time()
                         tool_result, tool_status = execute_worker_tool(

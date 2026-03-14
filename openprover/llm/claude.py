@@ -280,9 +280,11 @@ class LLMClient:
                                 "input": tool_input,
                                 "start_time": time.time(),
                             }
-                            if tool_start_callback and _cur_tool_name.startswith("mcp__"):
-                                parts = _cur_tool_name.split("__", 2)
-                                tname = parts[-1] if len(parts) == 3 else _cur_tool_name
+                            if tool_start_callback:
+                                tname = _cur_tool_name
+                                if tname.startswith("mcp__"):
+                                    parts = tname.split("__", 2)
+                                    tname = parts[-1] if len(parts) == 3 else tname
                                 tool_start_callback(tname, tool_input)
 
                 # Claude CLI emits tool results as {"type": "user"} messages

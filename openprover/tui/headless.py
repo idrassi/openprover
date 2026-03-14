@@ -11,6 +11,7 @@ class HeadlessTUI:
     def __init__(self):
         self._autonomous = True
         self.whiteboard = ""
+        self.wb_scroll_offset = 0
         self.step_entries: list[dict] = []
         self.pending_action: str | None = None
         self.trace_visible = False

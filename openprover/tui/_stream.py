@@ -98,6 +98,11 @@ class StreamMixin:
         if is_thinking:
             target.trace_buf.append(text)
         else:
+            # Update spinner label when transitioning from thinking to action
+            if (not self.trace_visible
+                    and target.spinner_label == "thinking"
+                    and not target.output_buf):
+                target.spinner_label = "crafting action"
             target.output_buf.append(text)
             output_segments = self._split_toml_stream_segments(target, text)
             for is_toml, seg in output_segments:

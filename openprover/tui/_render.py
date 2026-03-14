@@ -330,7 +330,7 @@ class RenderMixin:
                 parts.append(f'↓ {below} below')
             scroll_line = f' {DIM}{" · ".join(parts)}{RESET}'
 
-        # Render all rows: clear + write each row atomically (no bulk clear)
+        # Render all rows: overwrite in place (no erase, no flicker)
         for i in range(total_rows):
             right = right_lines[i] if i < len(right_lines) else ""
             if i < len(left_view):
@@ -342,9 +342,10 @@ class RenderMixin:
             else:
                 left = ""
             row = cs + i
+            padded_right = self._pad_to_width(right, right_w)
             self._write_raw(
-                f'\033[{row};1H\033[2K'
-                f'{self._pad_to_width(left, left_w)}{sep}{right}')
+                f'\033[{row};1H'
+                f'{self._pad_to_width(left, left_w)}{sep}{padded_right}')
 
         # Position cursor for feedback editing
         if confirming and self._confirm_selected == 1:

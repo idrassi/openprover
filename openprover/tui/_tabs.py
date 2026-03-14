@@ -52,19 +52,25 @@ class TabsMixin:
             planner.spinner_time = 0.0
             planner.spinner_tick = 0
             planner.spinner_tokens = 0
-            if planner is self._active_tab and self.view == "main":
-                ch = SPINNER[0]
-                with self._write_lock:
-                    self._write_raw(f'  {DIM}{ch} {text} {self._spinner_status(0, 0)}{RESET}')
-                    sys.stdout.flush()
+            if planner is self._active_tab and self._main_visible:
+                if self.view == "whiteboard_split":
+                    self._redraw()
+                else:
+                    ch = SPINNER[0]
+                    with self._write_lock:
+                        self._write_raw(f'  {DIM}{ch} {text} {self._spinner_status(0, 0)}{RESET}')
+                        sys.stdout.flush()
         else:
             planner.streaming = False
             planner.is_waiting = False
             planner.spinner_label = ""
-            if planner is self._active_tab and self.view == "main":
-                with self._write_lock:
-                    self._write_raw('\r\033[2K')
-                    sys.stdout.flush()
+            if planner is self._active_tab and self._main_visible:
+                if self.view == "whiteboard_split":
+                    self._redraw()
+                else:
+                    with self._write_lock:
+                        self._write_raw('\r\033[2K')
+                        sys.stdout.flush()
         self._redraw_header()
 
     def worker_output(self, tab_id: str, text: str):
@@ -76,7 +82,7 @@ class TabsMixin:
             tab.log_lines.append(_LogEntry(line))
         if len(tab.log_lines) > 500:
             tab.log_lines = tab.log_lines[-500:]
-        if tab is self._active_tab and self.view == "main":
+        if tab is self._active_tab and self._main_visible:
             self._redraw()
 
     def add_worker_action(self, tab_id: str, tool: str, args: dict,

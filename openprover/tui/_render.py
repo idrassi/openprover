@@ -49,7 +49,6 @@ class RenderMixin:
         # Row 3 — hints
         help_style = BOLD if self.view == "help" else DIM
         auto_style = BOLD if self.autonomous else DIM
-        wb_style = BOLD if self.view == "whiteboard" else DIM
         trace_style = BOLD if self.trace_visible else DIM
         if self.active_tab_idx > 0:
             input_style = BOLD if self.view == "input" else DIM
@@ -59,9 +58,15 @@ class RenderMixin:
                             f'{auto_style}a autonomous{RESET}')
             hints_len = len("? help · r reasoning · i input · a autonomous")
         else:
+            if self.view == "whiteboard":
+                wb_label = f'{BOLD}w whiteboard{RESET}'
+            elif self.view == "whiteboard_split":
+                wb_label = f'{DIM}w white{RESET}{WHITE}board{RESET}'
+            else:
+                wb_label = f'{DIM}w whiteboard{RESET}'
             hints_styled = (f'{help_style}? help{RESET} {DIM}·{RESET} '
                             f'{trace_style}r reasoning{RESET} {DIM}·{RESET} '
-                            f'{wb_style}w whiteboard{RESET} {DIM}·{RESET} '
+                            f'{wb_label} {DIM}·{RESET} '
                             f'{auto_style}a autonomous{RESET}')
             hints_len = len("? help · r reasoning · w whiteboard · a autonomous")
         pad = max(w - 2 - hints_len - 1, 0)
@@ -122,12 +127,13 @@ class RenderMixin:
             if chars_after > 0:
                 self._write_raw(f'\033[{chars_after}D')
 
-    def _build_main_lines(self, tab: _Tab | None = None) -> list[str]:
+    def _build_main_lines(self, tab: _Tab | None = None,
+                          max_w_override: int | None = None) -> list[str]:
         """Build flat list of rendered lines for the active tab."""
         if tab is None:
             tab = self._active_tab
         lines: list[str] = []
-        max_w = max(self.cols - 4, 20)
+        max_w = max_w_override if max_w_override is not None else max(self.cols - 4, 20)
         planner_live_start = self._planner_live_start(tab)
         for idx, entry in enumerate(tab.log_lines):
             if entry.is_trace:
@@ -221,6 +227,42 @@ class RenderMixin:
     def _step_detail_max_scroll(self) -> int:
         return max(len(self._build_step_detail_lines()) - self._step_detail_avail_rows(), 0)
 
+    def _build_whiteboard_lines(self, max_w: int) -> list[str]:
+        """Build rendered whiteboard lines from self.whiteboard."""
+        from ._colors import CYAN
+        lines: list[str] = []
+        sections: list[str] = []
+        current_title = "Notes"
+        current_lines: list[str] = []
+
+        def flush():
+            if not current_lines:
+                return
+            if sections:
+                sections.append(f'  {DIM}{"─" * min(40, max_w)}{RESET}')
+                sections.append("")
+            sections.append(f"  {CYAN}{BOLD}{current_title}{RESET}")
+            for line in current_lines:
+                sections.append(f"  {line}" if line else "")
+
+        source_lines = self.whiteboard.splitlines() or ["(whiteboard is empty)"]
+        for wline in source_lines:
+            stripped = wline.strip()
+            if stripped.startswith("## "):
+                flush()
+                current_title = stripped[3:].strip() or "Notes"
+                current_lines = []
+                continue
+            current_lines.append(wline)
+        flush()
+        if not sections:
+            sections.append("  (whiteboard is empty)")
+
+        for sline in sections:
+            for wrapped in self._wrap_visual_text(sline, max_w):
+                lines.append(wrapped)
+        return lines
+
     def _redraw(self):
         with self._write_lock:
             self._write_raw('\033[?25l')
@@ -275,35 +317,61 @@ class RenderMixin:
             elif self.view == "whiteboard":
                 self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}(esc to return){RESET}\n')
                 self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
-                sections: list[str] = []
-                current_title = "Notes"
-                current_lines: list[str] = []
-
-                def flush_whiteboard_section():
-                    if not current_lines:
-                        return
-                    if sections:
-                        sections.append(f'  {DIM}{"─" * 40}{RESET}')
-                        sections.append("")
-                    sections.append(f"  {CYAN}{BOLD}{current_title}{RESET}")
-                    for line in current_lines:
-                        sections.append(f"  {line}" if line else "")
-
-                source_lines = self.whiteboard.splitlines() or ["(whiteboard is empty)"]
-                for wline in source_lines:
-                    stripped = wline.strip()
-                    if stripped.startswith("## "):
-                        flush_whiteboard_section()
-                        current_title = stripped[3:].strip() or "Notes"
-                        current_lines = []
-                        continue
-                    current_lines.append(wline)
-                flush_whiteboard_section()
-                if not sections:
-                    sections.append("  (whiteboard is empty)")
-
-                for iline in sections:
+                max_w = max(self.cols - 4, 20)
+                for iline in self._build_whiteboard_lines(max_w):
                     self._write_raw(f'{iline}\n')
+            elif self.view == "whiteboard_split":
+                tab = self._active_tab
+                left_w = self.cols // 2 - 1
+                right_w = self.cols - left_w - 1
+                left_lines = self._build_main_lines(tab, max_w_override=max(left_w - 4, 10))
+                right_lines = self._build_whiteboard_lines(max(right_w - 2, 10))
+                sep = f'{DIM}│{RESET}'
+
+                spinner_active = (tab.streaming and tab.spinner_label
+                                  and not self._has_visible_stream_content(tab))
+                avail = self._main_avail_rows(tab)
+
+                # Clamp scroll
+                max_off = self._max_scroll_offset(left_lines, tab)
+                if tab.scroll_offset > max_off:
+                    tab.scroll_offset = max_off
+
+                visible = avail - 1 if len(left_lines) > avail else avail
+                end = len(left_lines) - tab.scroll_offset
+                start = max(end - visible, 0)
+                left_view = left_lines[start:end]
+
+                # Spinner line on left
+                if spinner_active:
+                    ch = SPINNER[tab.spinner_tick]
+                    elapsed = int(time.monotonic() - tab.spinner_start)
+                    status = self._spinner_status(elapsed, tab.spinner_tokens)
+                    bar = f' {GREEN}▎{RESET}' if self._spinner_selected(tab) else '  '
+                    left_view.append(f'{bar}{DIM}{ch} {tab.spinner_label} {status}{RESET}')
+
+                n_rows = max(len(left_view), len(right_lines))
+                for i in range(n_rows):
+                    left = left_view[i] if i < len(left_view) else ""
+                    right = right_lines[i] if i < len(right_lines) else ""
+                    self._write_raw(f'{self._pad_to_width(left, left_w)}{sep}{right}\n')
+
+                # Scroll indicator on left
+                above = start
+                below = tab.scroll_offset
+                if above > 0 or below > 0:
+                    parts = []
+                    if above > 0:
+                        parts.append(f'↑ {above} above')
+                    if below > 0:
+                        parts.append(f'↓ {below} below')
+                    indicator = f' {DIM}{" · ".join(parts)}{RESET}'
+                    padded = self._pad_to_width(indicator, left_w)
+                    self._write_raw(f'\033[{self.rows};1H\033[2K{padded}{sep}')
+
+                if self._confirming and not self._browsing and self.active_tab_idx == 0:
+                    self._draw_confirmation()
+                    self._write_raw('\033[?25h')
             elif self.view == "input":
                 tab = self._active_tab
                 status_badge = (

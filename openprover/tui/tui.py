@@ -81,6 +81,10 @@ class TUI(TextMixin, StreamMixin, NavMixin, TabsMixin, StepsMixin,
             return self.tabs[self.active_tab_idx]
         return self.tabs[0]
 
+    @property
+    def _main_visible(self) -> bool:
+        return self.view in ("main", "whiteboard_split")
+
     def _find_tab(self, tab_id: str) -> _Tab:
         for tab in self.tabs:
             if tab.id == tab_id:
@@ -185,8 +189,8 @@ class TUI(TextMixin, StreamMixin, NavMixin, TabsMixin, StepsMixin,
         tab.log_lines.append(entry)
         if len(tab.log_lines) > 500:
             tab.log_lines = tab.log_lines[-500:]
-        if tab is self._active_tab and self.view == "main":
-            if tab.scroll_offset > 0:
+        if tab is self._active_tab and self._main_visible:
+            if tab.scroll_offset > 0 or self.view == "whiteboard_split":
                 tab.scroll_offset = 0
                 self._redraw()
             else:

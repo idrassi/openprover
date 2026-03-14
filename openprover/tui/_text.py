@@ -77,6 +77,29 @@ class TextMixin:
         return parts
 
     @staticmethod
+    def _visible_len(text: str) -> int:
+        """Count visible characters, ignoring ANSI escape sequences."""
+        n = 0
+        i = 0
+        while i < len(text):
+            if text[i] == '\x1b':
+                m = re.match(r'\x1b\[[0-9;?]*[ -/]*[@-~]', text[i:])
+                if m:
+                    i += len(m.group(0))
+                    continue
+            n += 1
+            i += 1
+        return n
+
+    @classmethod
+    def _pad_to_width(cls, text: str, width: int) -> str:
+        """Pad text with spaces to reach target visible width."""
+        vlen = cls._visible_len(text)
+        if vlen >= width:
+            return text
+        return text + " " * (width - vlen)
+
+    @staticmethod
     def _leading_visible_spaces(text: str) -> int:
         """Count visible leading spaces while ignoring ANSI escapes."""
         i = 0

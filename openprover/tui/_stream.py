@@ -27,7 +27,10 @@ class StreamMixin:
     def _update_spinner(self):
         tab = self._active_tab
         now = time.monotonic()
-        if self.view == "main":
+        if self._main_visible:
+            if self.view == "whiteboard_split":
+                self._redraw()
+                return
             ch = SPINNER[tab.spinner_tick]
             elapsed = int(now - tab.spinner_start)
             status = self._spinner_status(elapsed, tab.spinner_tokens)
@@ -60,8 +63,11 @@ class StreamMixin:
         target.spinner_time = time.monotonic()
         target.spinner_start = target.spinner_time
         self._redraw_header()
-        if target is self._active_tab and self.view == "main":
-            self._write(f'  {DIM}{SPINNER[0]} {label} {self._spinner_status(0, 0)}{RESET}')
+        if target is self._active_tab and self._main_visible:
+            if self.view == "whiteboard_split":
+                self._redraw()
+            else:
+                self._write(f'  {DIM}{SPINNER[0]} {label} {self._spinner_status(0, 0)}{RESET}')
 
     def stream_text(self, text: str, kind: str = "text", tab: str = "planner"):
         self._check_keys()
@@ -109,7 +115,10 @@ class StreamMixin:
 
         # Clear spinner on first visible content
         if (not had_visible and has_visible
-                and self.view == "main" and is_active and at_bottom):
+                and self._main_visible and is_active and at_bottom):
+            if self.view == "whiteboard_split":
+                self._redraw()
+                return
             with self._write_lock:
                 self._write_raw('\r\033[2K')
                 sys.stdout.flush()
@@ -123,7 +132,10 @@ class StreamMixin:
         )
 
         should_display = (is_thinking and self.trace_visible) or (not is_thinking and output_shown)
-        if should_display and self.view == "main" and is_active and at_bottom:
+        if should_display and self._main_visible and is_active and at_bottom:
+            if self.view == "whiteboard_split":
+                self._redraw()
+                return
             if trace_needs_newline and self.trace_visible:
                 self._write("\n")
             if is_thinking:
@@ -168,8 +180,8 @@ class StreamMixin:
         is_active = target is self._active_tab
         had_visible = ((target.last_trace and self.trace_visible)
                        or target.last_output)
-        if is_active and self.view == "main":
-            if target.scroll_offset > 0:
+        if is_active and self._main_visible:
+            if self.view == "whiteboard_split" or target.scroll_offset > 0:
                 self._redraw()
             elif had_visible:
                 self._write('\n')

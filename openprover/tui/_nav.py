@@ -8,7 +8,9 @@ class NavMixin:
     def _switch_tab(self, delta: int):
         if len(self.tabs) <= 1:
             return
+        self._active_tab.view = self.view
         self.active_tab_idx = (self.active_tab_idx + delta) % len(self.tabs)
+        self.view = self._active_tab.view
         self._redraw()
 
     def _nav_up(self):
@@ -121,7 +123,7 @@ class NavMixin:
         return (start, max(line_idx - 1, start))
 
     def _scroll_selection_into_view(self):
-        if self.view != "main":
+        if not self._main_visible:
             return
         tab = self._active_tab
         lines = self._build_main_lines(tab)

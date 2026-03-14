@@ -130,7 +130,15 @@ class InputMixin:
                 self._toggle_view("input")
         elif ch == 'w':
             if self.active_tab_idx == 0:
-                self._toggle_view("whiteboard")
+                if self.view == "main":
+                    self.view = "whiteboard_split"
+                elif self.view == "whiteboard_split":
+                    self.view = "whiteboard"
+                elif self.view == "whiteboard":
+                    self.view = "main"
+                else:
+                    self.view = "whiteboard_split"
+                self._redraw()
         elif ch == '?':
             self._toggle_view("help")
         elif ch == 'a':
@@ -145,7 +153,7 @@ class InputMixin:
         elif ch == '\x1b[6~':
             self._scroll_down()
         elif ch == '\x1b[A':  # up arrow — navigate entries
-            if self.view == "main":
+            if self._main_visible:
                 tab = self._active_tab
                 if tab.id == "planner" and self.step_entries:
                     self._nav_up()
@@ -158,7 +166,7 @@ class InputMixin:
             else:
                 self._scroll_lines_up()
         elif ch == '\x1b[B':  # down arrow — navigate entries
-            if self.view == "main":
+            if self._main_visible:
                 tab = self._active_tab
                 if tab.id == "planner" and self.step_entries:
                     self._nav_down()

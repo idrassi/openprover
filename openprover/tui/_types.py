@@ -16,7 +16,7 @@ class _LogEntry:
 class _Tab:
     """A tab with its own log buffer and streaming state."""
     __slots__ = ("id", "label", "log_lines", "trace_buf", "output_buf",
-                 "scroll_offset",
+                 "scroll_offset", "view",
                  "streaming", "spinner_label", "spinner_tick", "spinner_time",
                  "spinner_start", "spinner_tokens", "last_trace", "last_output",
                  "toml_pending", "toml_close_tag", "output_non_toml_seen",
@@ -31,6 +31,7 @@ class _Tab:
         self.trace_buf: list[str] = []
         self.output_buf: list[str] = []
         self.scroll_offset = 0
+        self.view = "main"
         self.streaming = False
         self.spinner_label = ""
         self.spinner_tick = 0

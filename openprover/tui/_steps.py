@@ -138,7 +138,7 @@ class StepsMixin:
         self._tab_log(planner, line, step_idx=idx)
         self.step_entries.append(entry)
         self.update_step(step_num, max_steps)
-        if self.view == "main":
+        if self._main_visible:
             self._redraw()
         return idx
 
@@ -168,7 +168,7 @@ class StepsMixin:
             base = entry.get("detail", "")
             entry["detail"] = f"{base}\n\n{detail_append}".strip() if base else detail_append
         self._sync_step_log_line(step_idx)
-        if self.view == "main":
+        if self._main_visible:
             self._redraw()
 
     def append_step_action_output(self, step_num: int, text: str):
@@ -521,8 +521,8 @@ class StepsMixin:
                 self._replan_notice_entry = entry
         else:
             self._replan_notice_entry = entry
-        if planner is self._active_tab and self.view == "main":
-            if planner.scroll_offset > 0:
+        if planner is self._active_tab and self._main_visible:
+            if planner.scroll_offset > 0 or self.view == "whiteboard_split":
                 planner.scroll_offset = 0
                 self._redraw()
             else:
@@ -538,5 +538,5 @@ class StepsMixin:
         except ValueError:
             pass
         self._replan_notice_entry = None
-        if planner is self._active_tab and self.view == "main":
+        if planner is self._active_tab and self._main_visible:
             self._redraw()

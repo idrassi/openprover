@@ -230,6 +230,19 @@ class RenderMixin:
         # +1: when scrolled, indicator row takes 1 row from available space
         return total - avail + 1
 
+    def _display_whiteboard(self) -> tuple[str, str]:
+        """Return (whiteboard_content, label) based on navigation state.
+
+        When a historical step is selected, returns that step's snapshot.
+        Otherwise returns the current live whiteboard.
+        """
+        if self._nav_step >= 0 and self._nav_step < len(self.step_entries):
+            entry = self.step_entries[self._nav_step]
+            wb = entry.get("whiteboard", "")
+            step_num = entry.get("step_num", "?")
+            return wb, f"Step {step_num}"
+        return self.whiteboard, "current"
+
     def _build_whiteboard_lines(self, max_w: int) -> list[str]:
         """Build rendered whiteboard lines from self.whiteboard."""
         from ._colors import CYAN
@@ -248,7 +261,8 @@ class RenderMixin:
             for line in current_lines:
                 sections.append(f"  {line}" if line else "")
 
-        source_lines = self.whiteboard.splitlines() or ["(whiteboard is empty)"]
+        wb_content, _ = self._display_whiteboard()
+        source_lines = wb_content.splitlines() or ["(whiteboard is empty)"]
         for wline in source_lines:
             stripped = wline.strip()
             if stripped.startswith("## "):
@@ -273,7 +287,9 @@ class RenderMixin:
         right_w = self.cols - left_w - 1
         left_max_w = max(left_w - 4, 10)
         left_lines = self._build_main_lines(tab, max_w_override=left_max_w)
-        all_right_lines = self._build_whiteboard_lines(max(right_w - 2, 10))
+        _, wb_label = self._display_whiteboard()
+        wb_header = f' {BOLD}Whiteboard{RESET} {DIM}[{wb_label}]{RESET}'
+        all_right_lines = [wb_header] + self._build_whiteboard_lines(max(right_w - 2, 10))
         sep = f'{DIM}│{RESET}'
 
         confirming = (self._confirming and not self._browsing
@@ -478,7 +494,8 @@ class RenderMixin:
                 self._write_raw(f'\033[{cs};1H')
 
                 if self.view == "whiteboard":
-                    self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}(esc to return){RESET}\n')
+                    _, wb_label = self._display_whiteboard()
+                    self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}[{wb_label}] (esc to return){RESET}\n')
                     self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
                     max_w = max(self.cols - 4, 20)
                     wb_lines = self._build_whiteboard_lines(max_w)

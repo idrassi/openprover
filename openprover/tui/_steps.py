@@ -133,6 +133,7 @@ class StepsMixin:
             "rejected": rejected,
             "interrupted": interrupted,
             "feedback": feedback.strip(),
+            "whiteboard": getattr(self, "whiteboard", ""),
         }
         line = self._format_step_line(entry)
         self._tab_log(planner, line, step_idx=idx)

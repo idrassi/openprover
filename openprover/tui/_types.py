@@ -23,7 +23,7 @@ class _Tab:
                  "output_toml_seen", "is_waiting",
                  "done", "task_description",
                  "entries", "nav_idx",
-                 "pending_action_log_idx", "prev_spinner_label")
+                 "pending_actions")
 
     def __init__(self, tab_id: str, label: str, task_description: str = ""):
         self.id = tab_id
@@ -51,6 +51,5 @@ class _Tab:
         # Navigable entries (action entries for worker tabs)
         self.entries: list[dict] = []
         self.nav_idx: int = -1  # -1 = none selected, 0..N-1 = entry index
-        # In-progress action tracking
-        self.pending_action_log_idx: int = -1
-        self.prev_spinner_label: str = ""
+        # In-progress action tracking: entry_idx → log_line_idx
+        self.pending_actions: dict[int, int] = {}

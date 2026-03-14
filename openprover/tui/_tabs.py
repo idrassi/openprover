@@ -117,11 +117,14 @@ class TabsMixin:
         tab.entries.append(entry)
         line = self._format_action_line(entry)
         tab.log_lines.append(_LogEntry(line, step_idx=idx))
-        tab.pending_action_log_idx = len(tab.log_lines) - 1
+        tab.pending_actions[idx] = len(tab.log_lines) - 1
 
         # Set up spinner for tool execution duration.
-        tab.prev_spinner_label = tab.spinner_label
-        tab.spinner_label = f"{tool}\u2026"
+        n_pending = len(tab.pending_actions)
+        if n_pending == 1:
+            tab.spinner_label = f"{tool}\u2026"
+        else:
+            tab.spinner_label = f"{n_pending} actions\u2026"
         tab.spinner_start = time.monotonic()
         tab.spinner_time = 0.0
         tab.spinner_tick = 0
@@ -137,34 +140,43 @@ class TabsMixin:
         """Record a completed tool call in a worker tab as a navigable entry."""
         tab = self._find_tab(tab_id)
 
-        # Complete a pending action: update the existing entry and log line
-        if tab.pending_action_log_idx >= 0:
-            log_idx = tab.pending_action_log_idx
-            tab.pending_action_log_idx = -1
+        # Find pending action matching this tool name
+        matched_entry_idx = None
+        for eidx in tab.pending_actions:
+            if 0 <= eidx < len(tab.entries) and tab.entries[eidx].get("tool") == tool:
+                matched_entry_idx = eidx
+                break
+
+        if matched_entry_idx is not None:
+            log_idx = tab.pending_actions.pop(matched_entry_idx)
             if 0 <= log_idx < len(tab.log_lines):
-                entry_idx = tab.log_lines[log_idx].step_idx
-                if 0 <= entry_idx < len(tab.entries):
-                    entry = tab.entries[entry_idx]
-                    entry["result"] = result
-                    entry["status"] = status
-                    entry["duration_ms"] = duration_ms
-                    tab.log_lines[log_idx].text = self._format_action_line(entry)
-                    # Clear spinner
-                    tab.spinner_label = tab.prev_spinner_label
-                    tab.prev_spinner_label = ""
-                    if not tab.spinner_label:
-                        tab.streaming = False
-                    # Clear the spinner line and redraw
-                    if tab is self._active_tab and self._main_visible:
-                        if self.view == "whiteboard_split":
-                            self._redraw()
-                        else:
-                            with self._write_lock:
-                                self._write_raw('\r\033[2K')
-                                sys.stdout.flush()
-                            self._redraw()
-                    self._redraw_header()
-                    return
+                entry = tab.entries[matched_entry_idx]
+                entry["result"] = result
+                entry["status"] = status
+                entry["duration_ms"] = duration_ms
+                tab.log_lines[log_idx].text = self._format_action_line(entry)
+                # Update spinner for remaining pending actions
+                n_pending = len(tab.pending_actions)
+                if n_pending == 0:
+                    tab.spinner_label = ""
+                    tab.streaming = False
+                elif n_pending == 1:
+                    remaining_idx = next(iter(tab.pending_actions))
+                    remaining_tool = tab.entries[remaining_idx].get("tool", "?")
+                    tab.spinner_label = f"{remaining_tool}\u2026"
+                else:
+                    tab.spinner_label = f"{n_pending} actions\u2026"
+                # Clear the spinner line and redraw
+                if tab is self._active_tab and self._main_visible:
+                    if self.view == "whiteboard_split":
+                        self._redraw()
+                    else:
+                        with self._write_lock:
+                            self._write_raw('\r\033[2K')
+                            sys.stdout.flush()
+                        self._redraw()
+                self._redraw_header()
+                return
 
         # Fallback: no pending action, append as new entry
         entry = {

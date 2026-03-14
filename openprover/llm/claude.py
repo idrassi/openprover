@@ -290,11 +290,9 @@ class LLMClient:
                                 "input": tool_input,
                                 "start_time": time.time(),
                             }
-                            if tool_start_callback:
-                                tname = _cur_tool_name
-                                if tname.startswith("mcp__"):
-                                    parts = tname.split("__", 2)
-                                    tname = parts[-1] if len(parts) == 3 else tname
+                            if tool_start_callback and _cur_tool_name.startswith("mcp__"):
+                                parts = _cur_tool_name.split("__", 2)
+                                tname = parts[-1] if len(parts) == 3 else _cur_tool_name
                                 tool_start_callback(tname, tool_input)
 
                 # Claude CLI emits tool results as {"type": "user"} messages
@@ -311,11 +309,13 @@ class LLMClient:
                             tc = _pending_tools.pop(tid, None)
                             if not tc:
                                 continue
-                            # Strip MCP prefix (mcp__server__tool → tool)
+                            # Skip non-MCP tools (e.g. ToolSearch)
                             name = tc["name"]
-                            if name.startswith("mcp__"):
-                                parts = name.split("__", 2)
-                                name = parts[-1] if len(parts) == 3 else name
+                            if not name.startswith("mcp__"):
+                                continue
+                            # Strip MCP prefix (mcp__server__tool → tool)
+                            parts = name.split("__", 2)
+                            name = parts[-1] if len(parts) == 3 else name
                             # Extract result text
                             raw_content = item.get("content", "")
                             try:
@@ -351,6 +351,10 @@ class LLMClient:
             proc.wait()
 
         elapsed_ms = int((time.time() - start) * 1000)
+
+        # Catch race: process killed by interrupt() while readline() blocked
+        if not interrupted and self._interrupted.is_set():
+            interrupted = True
 
         if interrupted:
             self._archive(call_num, label, prompt, system_prompt, json_schema,

@@ -13,6 +13,7 @@ from . import prompts
 from .lean import LeanTheorem, LeanWorkDir, run_lean_check, WORKER_TOOLS, execute_worker_tool
 from .llm import Interrupted, LLMClient
 from .tui import TUI
+from .tui._colors import YELLOW, GREEN, RESET as _RESET
 
 logger = logging.getLogger("openprover")
 
@@ -743,7 +744,7 @@ class Prover:
             # Feedback
             text = user_resp.strip()
             if text:
-                self.tui.log(f"Feedback: {text}", color="yellow")
+                self.tui.log(f"{YELLOW}Feedback:{_RESET} {GREEN}{text}{_RESET}")
             self._push_output(f"Human feedback: {user_resp}")
             # Include partial planner output + feedback in history so next
             # planner call sees what was interrupted and the user's guidance.

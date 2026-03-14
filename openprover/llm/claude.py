@@ -332,8 +332,6 @@ class LLMClient:
                             elif name == "lean_verify":
                                 status = ("ok" if result_text
                                           .startswith("OK") else "error")
-                            elif "error" in result_text[:50].lower():
-                                status = "error"
                             else:
                                 status = "ok"
                             duration_ms = int(

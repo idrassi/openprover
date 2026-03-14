@@ -225,6 +225,8 @@ class TabsMixin:
 
     def clear_worker_tabs(self):
         """Remove all worker tabs, keeping planner and logs."""
+        if self.view != "main":
+            self.view = "main"
         logs = [t for t in self.tabs if t.id == "logs"]
         self.tabs = [self.tabs[0]] + logs
         self.active_tab_idx = 0

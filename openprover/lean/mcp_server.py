@@ -78,7 +78,7 @@ def _get_search_service():
 def lean_verify(code: str) -> str:
     """Verify Lean 4 code. Returns compiler output (errors/warnings or OK)."""
     if not code.strip():
-        return "Error: no code provided"
+        raise ValueError("no code provided")
     work_dir = _get_work_dir()
     project_dir = _get_project_dir()
     path = work_dir.make_file("mcp_verify", code)
@@ -90,41 +90,32 @@ def lean_verify(code: str) -> str:
 async def lean_search(query: str) -> str:
     """Search Mathlib and Lean 4 declarations by natural language query."""
     if not query.strip():
-        return "Error: no query provided"
-    try:
-        service = _get_search_service()
-    except ImportError:
-        return "Error: lean_explore not installed"
-    except Exception as e:
-        return f"Error initializing search: {e}"
-
-    try:
-        rerank = 25 if _gpu_available() else 0
-        response = await service.search(query, limit=10, rerank_top=rerank)
-        results = response.results
-        if not results:
-            return "No results found"
-        parts = []
-        for r in results:
-            name = getattr(r, 'name', '')
-            module = getattr(r, 'module', '') or ''
-            source = getattr(r, 'source_text', '') or ''
-            doc = getattr(r, 'docstring', '') or ''
-            info = getattr(r, 'informalization', '') or ''
-            header = f"**{name}**"
-            if module:
-                header += f"  ({module})"
-            entry = header
-            if source:
-                entry += f"\n```lean\n{source.strip()}\n```"
-            if doc:
-                entry += f"\n{doc.strip()}"
-            if info:
-                entry += f"\nInformalization: {info.strip()}"
-            parts.append(entry)
-        return "\n\n".join(parts)
-    except Exception as e:
-        return f"Search error: {e}"
+        raise ValueError("no query provided")
+    service = _get_search_service()
+    rerank = 25 if _gpu_available() else 0
+    response = await service.search(query, limit=10, rerank_top=rerank)
+    results = response.results
+    if not results:
+        return "No results found"
+    parts = []
+    for r in results:
+        name = getattr(r, 'name', '')
+        module = getattr(r, 'module', '') or ''
+        source = getattr(r, 'source_text', '') or ''
+        doc = getattr(r, 'docstring', '') or ''
+        info = getattr(r, 'informalization', '') or ''
+        header = f"**{name}**"
+        if module:
+            header += f"  ({module})"
+        entry = header
+        if source:
+            entry += f"\n```lean\n{source.strip()}\n```"
+        if doc:
+            entry += f"\n{doc.strip()}"
+        if info:
+            entry += f"\nInformalization: {info.strip()}"
+        parts.append(entry)
+    return "\n\n".join(parts)
 
 
 if __name__ == "__main__":

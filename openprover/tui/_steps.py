@@ -432,10 +432,8 @@ class StepsMixin:
                     add_section(f"{label} Output", result_lines, color=MAGENTA)
 
         action_output = (entry.get("action_output") or "").rstrip()
-        if action_output and action != "spawn":
-            add_section("Action Output", action_output.splitlines(), color=MAGENTA)
-
-        # Per-item full content sections for write_items
+        # Per-item full content sections for write_items (before action output
+        # so content appears before verification errors)
         if action == "write_items":
             items = entry.get("write_items") or []
             for item in items:
@@ -447,6 +445,9 @@ class StepsMixin:
                     add_section(f"{slug}{ext}", item_lines, color=GREEN)
                 else:
                     add_section(f"{slug}{ext}", [f"{DIM}(delete){RESET}"], color=RED)
+
+        if action_output and action != "spawn":
+            add_section("Action Output", action_output.splitlines(), color=MAGENTA)
 
         self._step_detail_text = "\n".join(parts) if parts else "  (no detail)"
         self._step_detail_scroll = min(

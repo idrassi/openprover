@@ -166,15 +166,19 @@ class RenderMixin:
                     continue
             else:
                 is_entry = entry.step_idx >= 0
-                base = f' {entry.text}'
-                # Re-fit separator lines to current width
-                raw = entry.text.replace('\033[2m', '').replace('\033[0m', '').strip()
-                if raw and all(c == '─' for c in raw) and len(raw) > max_w - 2:
-                    base = f' {DIM}{"─" * (max_w - 2)}{RESET}'
-                continuation = " " * self._leading_visible_spaces(base)
-                wrapped_lines = self._wrap_visual_text(
-                    base, max_w, continuation_prefix=continuation
-                )
+                # Split on embedded newlines so each sub-line wraps independently
+                sub_lines = entry.text.split('\n')
+                wrapped_lines: list[str] = []
+                for j, sub in enumerate(sub_lines):
+                    base = f' {sub}' if j == 0 else sub
+                    # Re-fit separator lines to current width
+                    raw = sub.replace('\033[2m', '').replace('\033[0m', '').strip()
+                    if raw and all(c == '─' for c in raw) and len(raw) > max_w - 2:
+                        base = f' {DIM}{"─" * (max_w - 2)}{RESET}'
+                    continuation = " " * self._leading_visible_spaces(base)
+                    wrapped_lines.extend(self._wrap_visual_text(
+                        base, max_w, continuation_prefix=continuation
+                    ))
                 nav = self._nav_step if tab.id == "planner" else tab.nav_idx
                 is_proposal_line = (
                     self._nav_proposal and tab.id == "planner"

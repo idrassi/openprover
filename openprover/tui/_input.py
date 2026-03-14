@@ -447,7 +447,13 @@ class InputMixin:
                     continue
 
                 if len(ch) >= 3 and ch[:2] == '\x1b[':
-                    if ch == '\x1b[C':
+                    if ch == '\x1b[A':
+                        self._confirm_selected = 0
+                        self._redraw()
+                    elif ch == '\x1b[B':
+                        self._confirm_selected = 1
+                        self._redraw()
+                    elif ch == '\x1b[C':
                         if _in_feedback and self._confirm_cursor < len(self._confirm_buf):
                             self._confirm_cursor += 1
                             self._redraw()

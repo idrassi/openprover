@@ -155,7 +155,9 @@ class RenderMixin:
                         continue
                     for tline in seg.splitlines():
                         text = f'  {DIM}{tline}{RESET}' if is_toml else f'  {tline}'
-                        for wrapped in self._wrap_visual_text(text, max_w):
+                        continuation = " " * self._leading_visible_spaces(text)
+                        for wrapped in self._wrap_visual_text(
+                                text, max_w, continuation_prefix=continuation):
                             lines.append(wrapped)
                     if not seg.splitlines():
                         text = f'  {DIM}{RESET}' if is_toml else '  '
@@ -207,7 +209,9 @@ class RenderMixin:
                         continue
                     for tline in seg.splitlines():
                         text = f'  {DIM}{tline}{RESET}' if is_toml else f'  {tline}'
-                        for wrapped in self._wrap_visual_text(text, max_w):
+                        continuation = " " * self._leading_visible_spaces(text)
+                        for wrapped in self._wrap_visual_text(
+                                text, max_w, continuation_prefix=continuation):
                             lines.append(wrapped)
         return lines
 
@@ -255,7 +259,6 @@ class RenderMixin:
             if not current_lines:
                 return
             if sections:
-                sections.append(f'  {DIM}{"─" * min(40, max_w)}{RESET}')
                 sections.append("")
             sections.append(f"  {CYAN}{BOLD}{current_title}{RESET}")
             for line in current_lines:
@@ -270,13 +273,19 @@ class RenderMixin:
                 current_title = stripped[3:].strip() or "Notes"
                 current_lines = []
                 continue
+            if stripped.startswith("### "):
+                sub_title = stripped[4:].strip()
+                current_lines.append(f"{BOLD}{sub_title}{RESET}")
+                continue
             current_lines.append(wline)
         flush()
         if not sections:
             sections.append("  (whiteboard is empty)")
 
         for sline in sections:
-            for wrapped in self._wrap_visual_text(sline, max_w):
+            continuation = " " * self._leading_visible_spaces(sline)
+            for wrapped in self._wrap_visual_text(
+                    sline, max_w, continuation_prefix=continuation):
                 lines.append(wrapped)
         return lines
 
@@ -288,8 +297,10 @@ class RenderMixin:
         left_max_w = max(left_w - 4, 10)
         left_lines = self._build_main_lines(tab, max_w_override=left_max_w)
         _, wb_label = self._display_whiteboard()
+        right_max_w = max(right_w - 2, 10)
         wb_header = f' {BOLD}Whiteboard{RESET} {DIM}[{wb_label}]{RESET}'
-        all_right_lines = [wb_header] + self._build_whiteboard_lines(max(right_w - 2, 10))
+        wb_sep = f' {DIM}{"─" * right_max_w}{RESET}'
+        all_right_lines = [wb_header, wb_sep] + self._build_whiteboard_lines(right_max_w)
         sep = f'{DIM}│{RESET}'
 
         confirming = (self._confirming and not self._browsing
@@ -496,8 +507,8 @@ class RenderMixin:
                 if self.view == "whiteboard":
                     _, wb_label = self._display_whiteboard()
                     self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}[{wb_label}] (esc to return){RESET}\n')
-                    self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
                     max_w = max(self.cols - 4, 20)
+                    self._write_raw(f'  {DIM}{"─" * max_w}{RESET}\n')
                     wb_lines = self._build_whiteboard_lines(max_w)
                     avail = self._wb_avail_rows()
                     max_off = self._wb_max_scroll(wb_lines)

@@ -223,10 +223,13 @@ class TextMixin:
             )
         if entry.is_output:
             src = entry.text.splitlines() or [""]
-            return sum(
-                len(self._wrap_visual_text(f'  {line}', max_w))
-                for line in src
-            )
+            total = 0
+            for line in src:
+                text = f'  {line}'
+                continuation = " " * self._leading_visible_spaces(text)
+                total += len(self._wrap_visual_text(
+                    text, max_w, continuation_prefix=continuation))
+            return total
         base = f' {entry.text}'
         continuation = " " * self._leading_visible_spaces(base)
         return len(self._wrap_visual_text(

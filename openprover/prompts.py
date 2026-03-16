@@ -492,9 +492,8 @@ def format_initial_whiteboard(theorem: str, mode: str) -> str:
 **Prove and Formalize**
 Produce both an informal proof and a formal Lean 4 proof of this theorem:
 
-<theorem>
+### Theorem
 {theorem_text}
-</theorem>
 
 To see the formal theorem statement in Lean, use read_theorem. Only do that after you figured out the informal proof in English.
 
@@ -514,9 +513,8 @@ To see the formal theorem statement in Lean, use read_theorem. Only do that afte
 **Formalize**
 Formalize the proof of the following theorem in Lean 4:
 
-<theorem>
+### Theorem
 {theorem_text}
-</theorem>
 
 ## Plan
 
@@ -531,9 +529,8 @@ Formalize the proof of the following theorem in Lean 4:
 
 Produce a proof of this theorem:
 
-<theorem>
+### Theorem
 {theorem_text}
-</theorem>
 
 ## Plan
 

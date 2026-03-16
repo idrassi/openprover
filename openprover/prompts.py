@@ -163,6 +163,8 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         f'**read_items**: `read = ["slug-1", "slug-2"]`\n'
         "**write_items**: one or more `[[items]]` sections:\n"
         f"{_TOML_OPEN_TAG}\n"
+        'action = "write_items"\n'
+        "\n"
         "[[items]]\n"
         f'slug = "item-slug"\n'
         f"content = {_TQ}\n"
@@ -187,6 +189,8 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
             f"Content must be a **complete, standalone Lean file** (with `import Mathlib` and all needed imports). "
             f"Include natural language descriptions as `--` comments. The first comment line is the summary.\n"
             f"{_TOML_OPEN_TAG}\n"
+            'action = "write_items"\n'
+            "\n"
             "[[items]]\n"
             'slug = "helper-lemma"\n'
             'format = "lean"\n'

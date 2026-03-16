@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -55,7 +56,10 @@ class LLMClient:
         with self._procs_lock:
             for proc in self._active_procs:
                 if proc.poll() is None:
-                    proc.kill()
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (OSError, ProcessLookupError):
+                        proc.kill()
 
     def clear_interrupt(self):
         """Reset the interrupt flag so new calls can proceed."""
@@ -150,6 +154,7 @@ class LLMClient:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, env=self._env,
+            start_new_session=True,
         )
         with self._procs_lock:
             self._active_procs.append(proc)
@@ -240,6 +245,7 @@ class LLMClient:
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, bufsize=1, env=self._env,
+            start_new_session=True,
         )
         with self._procs_lock:
             self._active_procs.append(proc)

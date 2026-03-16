@@ -622,6 +622,8 @@ class StepsMixin:
             status_badge = f"{YELLOW}● running…{RESET}"
         elif status == "ok":
             status_badge = f"{GREEN}● succeeded{RESET}{dur_text}"
+        elif status == "partial":
+            status_badge = f"{YELLOW}● partial (sorry){RESET}{dur_text}"
         else:
             status_badge = f"{RED}● failed{RESET}{dur_text}"
         self._step_detail_title = (

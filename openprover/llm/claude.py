@@ -366,8 +366,16 @@ class LLMClient:
                             if is_error:
                                 status = "error"
                             elif name == "lean_verify":
-                                status = ("ok" if result_text
-                                          .startswith("OK") else "error")
+                                if "OK" in result_text.split('\n', 1)[0] or result_text.startswith("OK"):
+                                    status = "ok"
+                                elif any(": error:" in ln for ln in result_text.splitlines()):
+                                    status = "error"
+                                elif "sorry" in result_text.lower():
+                                    status = "partial"
+                                else:
+                                    status = "ok"
+                            elif name == "lean_store":
+                                status = "ok" if result_text.startswith("OK") else "error"
                             else:
                                 status = "ok"
                             duration_ms = int(

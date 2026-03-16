@@ -145,12 +145,12 @@ class NavMixin:
         start = max(end - visible, 0)
         target_start, target_end = sel
 
-        if target_start < start:
-            # Scroll up so target_start is at top; account for indicator
+        if target_start >= start and target_end < end:
+            pass  # Already fully visible, don't scroll
+        else:
+            # Scroll so target_start aligns with top of screen
             new_end = min(total, target_start + visible)
             tab.scroll_offset = max(total - new_end, 0)
-        elif target_end >= end:
-            tab.scroll_offset = max(total - (target_end + 1), 0)
 
         if tab.scroll_offset > max_off:
             tab.scroll_offset = max_off

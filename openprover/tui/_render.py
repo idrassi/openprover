@@ -298,7 +298,7 @@ class RenderMixin:
         left_lines = self._build_main_lines(tab, max_w_override=left_max_w)
         _, wb_label = self._display_whiteboard()
         right_max_w = max(right_w - 2, 10)
-        wb_header = f' {BOLD}Whiteboard{RESET} {DIM}[{wb_label}]{RESET}'
+        wb_header = f' {BOLD}WHITEBOARD{RESET} {DIM}[{wb_label}]{RESET}'
         wb_sep = f' {DIM}{"─" * right_max_w}{RESET}'
         all_right_lines = [wb_header, wb_sep] + self._build_whiteboard_lines(right_max_w)
         sep = f'{DIM}│{RESET}'
@@ -506,7 +506,7 @@ class RenderMixin:
 
                 if self.view == "whiteboard":
                     _, wb_label = self._display_whiteboard()
-                    self._write_raw(f'  {BOLD}Whiteboard{RESET} {DIM}[{wb_label}] (esc to return){RESET}\n')
+                    self._write_raw(f'  {BOLD}WHITEBOARD{RESET} {DIM}[{wb_label}] (esc to return){RESET}\n')
                     max_w = max(self.cols - 4, 20)
                     self._write_raw(f'  {DIM}{"─" * max_w}{RESET}\n')
                     wb_lines = self._build_whiteboard_lines(max_w)

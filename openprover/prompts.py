@@ -308,7 +308,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
     return (
         "You are a senior research mathematician coordinating a proof effort.\n"
         "\n"
-        "## Your Role\n"
+        "# Your Role\n"
         "\n"
         "You are the PLANNER. You decide WHAT to do and workers do the DOING. "
         "Never do mathematical reasoning, analysis, or problem-solving yourself - not even "
@@ -317,15 +317,21 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         "or brainstorm proof strategies - spawn workers for that. "
         "Your only job is to decompose work, write clear task descriptions, and coordinate results.\n"
         "\n"
-        "Each step you choose EXACTLY ONE action (never multiple):\n"
+        "---\n"
+        "\n"
+        "# Available Actions\n"
         "\n"
         f"{actions}"
         "\n"
-        "## Principles\n"
+        "---\n"
+        "\n"
+        "# Principles\n"
         "\n"
         f"{principles}"
         "\n"
-        "## Whiteboard Style\n"
+        "---\n"
+        "\n"
+        "# Whiteboard Style\n"
         "\n"
         "Terse, dense, like shorthand on a real whiteboard:\n"
         "- Sections: Goal, Plan, Status, Open Questions, Tried\n"
@@ -334,26 +340,46 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         '"WLOG assume $p,q$ coprime" not "Without loss of generality..."\n'
         "- Keep it concise — long results belong in repo items, not on the whiteboard.\n"
         "\n"
-        f"## Repo Items\n"
+        "---\n"
+        "\n"
+        f"# Repo Items\n"
         "\n"
         f"{repo_items}"
         "\n"
+        "---\n"
+        "\n"
         f"{submit_proof_section}"
         "\n"
-        "## Output Format\n"
+        "---\n"
         "\n"
-        "Think step by step, then end your response with EXACTLY ONE TOML decision block wrapped in exact tags.\n"
-        "Output only one action per step — never include multiple decision blocks.\n"
-        "**MANDATORY fields**: `action` (the action type) and `summary` (one-line description).\n"
+        "# Output Format\n"
+        "\n"
+        f"Think step by step, then output one or more TOML action blocks. "
+        f"Each block is wrapped in {_TOML_OPEN_TAG} ... {_TOML_CLOSE_TAG} tags and contains EXACTLY ONE action.\n"
+        "\n"
+        "**Rules:**\n"
+        "- Each block MUST have `action` and `summary` fields.\n"
+        "- At most ONE `spawn` block per step (spawning is expensive).\n"
+        "- Low-impact actions (write_whiteboard, read_items, read_theorem, write_items) can be combined freely with each other and with spawn.\n"
+        "- Typical pattern: write_whiteboard + spawn, or write_whiteboard + write_items + spawn.\n"
+        "\n"
+        "Example with two blocks:\n"
         "\n"
         f"{_TOML_OPEN_TAG}\n"
-        f'action = "spawn"  # REQUIRED — one of: {", ".join(available_actions)}\n'
-        'summary = "One-line description for the log"\n'
-        "\n"
-        "# Action-specific fields below (include only what's relevant)\n"
+        'action = "write_whiteboard"\n'
+        'summary = "Update plan after worker results"\n'
+        f'whiteboard = {_TQ}\n'
+        "...\n"
+        f'{_TQ}\n'
         f"{_TOML_CLOSE_TAG}\n"
         "\n"
-        "### Action-specific TOML fields:\n"
+        f"{_TOML_OPEN_TAG}\n"
+        f'action = "spawn"  # one of: {", ".join(available_actions)}\n'
+        'summary = "One-line description for the log"\n'
+        "# Action-specific fields below\n"
+        f"{_TOML_CLOSE_TAG}\n"
+        "\n"
+        "## Action-specific TOML fields\n"
         "\n"
         f"{toml_fields}"
     )
@@ -516,7 +542,6 @@ def format_planner_prompt(
             if output:
                 output = _truncate_keep_end(output, output_limit)
                 parts.append(f"\n\n### Result\n\n{output}")
-    parts.append(f"\n\nBudget: {budget_status}.")
     parts.append(f"\nMax {parallelism} worker(s) per spawn. What's the most productive next move?")
     return "".join(parts)
 
@@ -674,51 +699,61 @@ class ParseError:
         self.message = message
 
 
-def parse_planner_toml(text: str) -> dict | ParseError | None:
-    """Extract and parse the TOML decision block from planner output.
+def _parse_single_toml(toml_text: str) -> dict | None:
+    """Parse a single TOML block string into a dict."""
+    if tomllib is None:
+        return _parse_toml_minimal(toml_text)
+    try:
+        return tomllib.loads(toml_text)
+    except Exception:
+        return _parse_toml_minimal(toml_text)
+
+
+def parse_planner_toml(text: str) -> list[dict] | ParseError | None:
+    """Extract and parse TOML decision blocks from planner output.
 
     Returns:
-        dict: Successfully parsed plan with a valid action.
-        ParseError: Block was found but had a specific problem (e.g. missing action).
+        list[dict]: One or more successfully parsed action blocks.
+        ParseError: A block was found but had a specific problem.
         None: No OPENPROVER_ACTION block found at all.
     """
-    # Find <OPENPROVER_ACTION> ... </OPENPROVER_ACTION> block
-    match = re.search(
+    # Find all <OPENPROVER_ACTION> ... </OPENPROVER_ACTION> blocks
+    matches = re.findall(
         rf"{re.escape(_TOML_OPEN_TAG)}\s*\n?(.*?){re.escape(_TOML_CLOSE_TAG)}",
         text,
         re.DOTALL,
     )
-    if not match:
+    if not matches:
         return None
 
-    toml_text = match.group(1)
+    plans: list[dict] = []
+    spawn_count = 0
+    for toml_text in matches:
+        parsed = _parse_single_toml(toml_text)
+        if parsed is None:
+            parsed = {}
 
-    if tomllib is None:
-        parsed = _parse_toml_minimal(toml_text)
-    else:
-        try:
-            parsed = tomllib.loads(toml_text)
-        except Exception:
-            parsed = _parse_toml_minimal(toml_text)
+        action = parsed.get("action", "")
+        if not action:
+            return ParseError(
+                'Missing required field: action = "...". '
+                "Every OPENPROVER_ACTION block must include an action type. "
+                f"Valid actions: {', '.join(ACTIONS)}."
+            )
+        if action not in ACTIONS:
+            return ParseError(
+                f'Unknown action: "{action}". '
+                f"Valid actions: {', '.join(ACTIONS)}."
+            )
+        if action == "spawn":
+            spawn_count += 1
+            if spawn_count > 1:
+                return ParseError(
+                    "At most one spawn block is allowed per step."
+                )
+        plans.append(parsed)
 
-    if parsed is None:
-        parsed = {}
-
-    # Validate action field
-    action = parsed.get("action", "")
-    if not action:
-        return ParseError(
-            'Missing required field: action = "...". '
-            "Every OPENPROVER_ACTION block must include an action type. "
-            f"Valid actions: {', '.join(ACTIONS)}."
-        )
-    if action not in ACTIONS:
-        return ParseError(
-            f'Unknown action: "{action}". '
-            f"Valid actions: {', '.join(ACTIONS)}."
-        )
-
-    return parsed
+    return plans
 
 
 def parse_saved_step_toml(text: str) -> dict | None:

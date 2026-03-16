@@ -128,7 +128,7 @@ class HeadlessTUI:
                 )
                 break
 
-    def show_proposal(self, plan: dict):
+    def show_proposal(self, plans: list[dict] | dict):
         pass
 
     def show_replan_notice(self, text: str):

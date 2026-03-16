@@ -49,7 +49,7 @@ class TUI(TextMixin, StreamMixin, NavMixin, TabsMixin, StepsMixin,
         self.step_entries: list[dict] = []
         self._nav_step = -1  # -1 = options focused, 0..N-1 = step index
         self._nav_proposal = False  # True = proposed action is selected
-        self._current_proposal: dict | None = None  # stored by show_proposal
+        self._current_proposal: list[dict] | dict | None = None  # stored by show_proposal
         self._step_detail_text = ""
         self._step_detail_title = ""
         self._step_detail_idx = -1

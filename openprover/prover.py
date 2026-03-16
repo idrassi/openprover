@@ -535,11 +535,11 @@ class Prover:
             logger.info("Planner: %dms $%.4f",
                          resp.get("duration_ms", 0), resp.get("cost", 0))
 
-            # Parse TOML decision
-            plan = prompts.parse_planner_toml(resp["result"])
+            # Parse TOML decision block(s)
+            plans = prompts.parse_planner_toml(resp["result"])
 
-            if isinstance(plan, prompts.ParseError):
-                parse_error = plan.message
+            if isinstance(plans, prompts.ParseError):
+                parse_error = plans.message
                 remaining = MAX_PARSE_RETRIES - attempt
                 self.tui.log(
                     f"Invalid action: {parse_error} — "
@@ -548,10 +548,10 @@ class Prover:
                 )
                 logger.info("Validation error (attempt %d/%d): %s",
                             attempt + 1, MAX_PARSE_RETRIES + 1, parse_error)
-                plan = None
+                plans = None
                 continue
 
-            if plan is None:
+            if plans is None:
                 # Check if truncated — try Phase 2 forced output
                 finish = resp.get("finish_reason", "")
                 if finish in ("length", "max_tokens") and attempt == 0:
@@ -581,11 +581,11 @@ class Prover:
                     self.tui.stream_end(tab="planner")
                     self._track_output_tokens(resp)
                     last_resp = resp
-                    plan = prompts.parse_planner_toml(resp["result"])
-                    if isinstance(plan, prompts.ParseError):
-                        parse_error = plan.message
-                        plan = None
-                    elif plan is not None:
+                    plans = prompts.parse_planner_toml(resp["result"])
+                    if isinstance(plans, prompts.ParseError):
+                        parse_error = plans.message
+                        plans = None
+                    elif plans is not None:
                         break
 
                 parse_error = (
@@ -604,69 +604,92 @@ class Prover:
 
             break  # success
 
-        if plan is None:
+        if plans is None:
             self._save_step_meta(step_dir, status="parse_error", resp=last_resp,
                                  error=parse_error)
             return "continue"
 
-        action = plan["action"]
-        summary = plan.get("summary", "")
-        logger.info("Action: %s — %s", action, summary)
+        # Summarize actions for logging and step history
+        actions_summary = ", ".join(
+            f"{p['action']}" for p in plans
+        )
+        primary_plan = plans[-1]  # last action is typically the "main" one
+        primary_action = primary_plan["action"]
+        primary_summary = primary_plan.get("summary", "")
+        logger.info("Actions: %s", actions_summary)
 
         # Record planner output for step history
         self._current_planner_result = last_resp["result"]
-        self._current_step_action = action
-        self._current_step_summary = summary
+        self._current_step_action = primary_action
+        self._current_step_summary = primary_summary
 
-        # Save planner output
-        self._save_step(step_dir, plan)
+        # Save planner output (save primary plan for backward compat)
+        self._save_step(step_dir, primary_plan)
 
-        # Interactive confirmation for all actions when not autonomous
-        result = self._confirm_action(plan, step_dir, resp)
+        # Interactive confirmation for the whole batch
+        result = self._confirm_action(plans, step_dir, resp)
         if result is not None:
             return result
 
         self._step_idx = self.tui.step_complete(
-            self.step_num, action, summary,
+            self.step_num, primary_action, primary_summary,
         )
 
-        # Dispatch
-        if action == "submit_proof":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_submit_proof(plan, step_dir)
-        if action == "submit_lean_proof":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_submit_lean_proof(plan, step_dir)
-        if action == "give_up":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_give_up()
-        if action == "read_items":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_read_items(plan)
-        if action == "write_items":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            self.tui.step_entries[self._step_idx]["write_items"] = plan.get("items", [])
-            return self._handle_write_items(plan, step_dir)
-        if action == "spawn":
-            return self._handle_spawn(plan, step_dir, resp)
-        if action == "literature_search":
-            return self._handle_literature_search(plan, step_dir, resp)
-        if action == "read_theorem":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_read_theorem()
-        if action == "write_whiteboard":
-            self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
-            return self._handle_write_whiteboard(plan)
+        # Execute all plans sequentially
+        return self._execute_plans(plans, step_dir, resp)
 
-        # Should not reach here since parse_planner_toml validates action
-        self.tui.log(f"Unknown action: {action}", color="red")
-        self._save_step_meta(step_dir, status="unknown_action", action=action,
-                             resp=resp, error=f"Unknown action: {action}")
+    def _execute_plans(self, plans: list[dict], step_dir, resp) -> str:
+        """Execute a list of parsed action plans sequentially.
+
+        Low-impact actions (write_whiteboard, read_items, read_theorem, write_items)
+        are executed inline. spawn/literature_search/submit/give_up are dispatched
+        normally (there should be at most one such action per batch).
+        """
+        deferred_result = None
+        for plan in plans:
+            action = plan["action"]
+            summary = plan.get("summary", "")
+
+            if action == "write_whiteboard":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                self._handle_write_whiteboard(plan)
+            elif action == "read_items":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                self._handle_read_items(plan)
+            elif action == "read_theorem":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                self._handle_read_theorem()
+            elif action == "write_items":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                self.tui.step_entries[self._step_idx]["write_items"] = plan.get("items", [])
+                self._handle_write_items(plan, step_dir)
+            elif action == "submit_proof":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                deferred_result = self._handle_submit_proof(plan, step_dir)
+            elif action == "submit_lean_proof":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                deferred_result = self._handle_submit_lean_proof(plan, step_dir)
+            elif action == "give_up":
+                self._save_step_meta(step_dir, status="ok", action=action, resp=resp)
+                deferred_result = self._handle_give_up()
+            elif action == "spawn":
+                deferred_result = self._handle_spawn(plan, step_dir, resp)
+            elif action == "literature_search":
+                deferred_result = self._handle_literature_search(plan, step_dir, resp)
+            else:
+                self.tui.log(f"Unknown action: {action}", color="red")
+                self._save_step_meta(step_dir, status="unknown_action", action=action,
+                                     resp=resp, error=f"Unknown action: {action}")
+
+            # If a terminal/blocking action returned a result, stop processing
+            if deferred_result is not None:
+                return deferred_result
+
         return "continue"
 
     # ── Action handlers ──────────────────────────────────────
 
-    def _confirm_action(self, plan: dict, step_dir: Path,
+    def _confirm_action(self, plans: list[dict], step_dir: Path,
                         planner_resp: dict | None = None) -> str | None:
         """Show proposal and get user confirmation when not in autonomous mode.
 
@@ -678,11 +701,14 @@ class Prover:
             return None
 
         # Low-impact actions don't need approval
-        action = plan.get("action", "")
-        if action in ("read_items", "read_theorem", "write_whiteboard"):
+        needs_approval = any(
+            p.get("action", "") not in ("read_items", "read_theorem", "write_whiteboard")
+            for p in plans
+        )
+        if not needs_approval:
             return None
 
-        self.tui.show_proposal(plan)
+        self.tui.show_proposal(plans)
         while True:
             user_resp = self.tui.get_confirmation()
             if user_resp == "":
@@ -696,8 +722,10 @@ class Prover:
                 return None
             # Feedback — set as prev_output and retry next step
             text = user_resp.strip()
-            action = plan.get("action", "")
-            summary = plan.get("summary", "")
+            # Use the primary (last) plan for the rejection record
+            primary = plans[-1]
+            action = primary.get("action", "")
+            summary = primary.get("summary", "")
             detail = (
                 f"Proposed step:\n"
                 f"{action} — {summary}".strip(" —")

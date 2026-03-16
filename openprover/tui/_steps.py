@@ -9,15 +9,23 @@ from ._types import _LogEntry, _Tab
 
 class StepsMixin:
 
-    def show_proposal(self, plan: dict):
+    def show_proposal(self, plans: list[dict] | dict):
+        # Normalize: accept a single dict for backward compat
+        if isinstance(plans, dict):
+            plans = [plans]
         planner = self.tabs[0]
         self.clear_replan_notice()
-        self._current_proposal = plan
+        self._current_proposal = plans
         self._proposal_log_start = len(planner.log_lines)
         sep = self._dim_separator()
         self._tab_log(planner, sep)
-        self._tab_log(planner, f'{DIM}Next step:{RESET}')
+        label = "Next step:" if len(plans) == 1 else f"Next step ({len(plans)} actions):"
+        self._tab_log(planner, f'{DIM}{label}{RESET}')
 
+        for plan in plans:
+            self._log_single_proposal(planner, plan)
+
+    def _log_single_proposal(self, planner, plan: dict):
         action = plan.get("action", "")
         summary = plan.get("summary", "")
         color = ACTION_STYLE.get(action, "")
@@ -225,18 +233,25 @@ class StepsMixin:
         self.view = "step_detail"
 
     def _refresh_proposal_detail(self):
-        """Build detail text for the current proposal."""
-        plan = self._current_proposal
-        if not plan:
+        """Build detail text for the current proposal (list of plans)."""
+        proposals = self._current_proposal
+        if not proposals:
             self._step_detail_title = "Proposal"
             self._step_detail_text = "  (no proposal)"
             return
 
-        action = plan.get("action", "")
-        summary = plan.get("summary", "")
+        # Normalize: _current_proposal can be list[dict] or dict (legacy)
+        if isinstance(proposals, dict):
+            proposals = [proposals]
+
+        # Title from the primary (last) plan
+        primary = proposals[-1]
+        action = primary.get("action", "")
+        summary = primary.get("summary", "")
         action_color = ACTION_STYLE.get(action, WHITE)
+        count_label = f" ({len(proposals)} actions)" if len(proposals) > 1 else ""
         self._step_detail_title = (
-            f"Proposed: {action_color}{action}{RESET} {DIM}—{RESET} {summary}"
+            f"Proposed{count_label}: {action_color}{action}{RESET} {DIM}—{RESET} {summary}"
             f"  {YELLOW}● proposed{RESET}"
         )
 
@@ -280,58 +295,72 @@ class StepsMixin:
         if planner_lines:
             add_section("Planner Output", planner_lines, color=BLUE)
 
-        # Action Input — action-specific detail from the plan dict
-        detail_lines: list[str] = []
-        if action == "spawn":
-            tasks = plan.get("tasks", [])
-            for i, task in enumerate(tasks):
-                desc = task.get("description", "").strip()
-                if desc:
-                    lines = desc.splitlines()
-                    detail_lines.append(f"[{i}] {lines[0]}")
-                    for line in lines[1:]:
-                        detail_lines.append(f"    {line}")
-                else:
-                    detail_lines.append(f"[{i}] (no description)")
-        elif action == "literature_search":
-            query = plan.get("search_query", "")
-            context = plan.get("search_context", "")
-            if query:
-                detail_lines.append(f"Query:   {query}")
-            if context:
-                for line in context.strip().splitlines():
-                    detail_lines.append(f"Context: {line}")
-        elif action == "write_items":
-            items = plan.get("items", [])
-            for item in items:
-                slug = item.get("slug", "?")
-                content = item.get("content", "")
-                ext = ".lean" if item.get("format") == "lean" else ".md"
-                if content:
-                    first = content.strip().splitlines()[0] if content.strip() else ""
-                    detail_lines.append(f"• {slug}{ext} — {first}")
-                else:
-                    detail_lines.append(f"• {slug}{ext} (delete)")
-        elif action == "read_items":
-            slugs = plan.get("read", [])
-            if slugs:
-                detail_lines.append(", ".join(slugs))
+        # Show detail for each plan in the batch
+        for plan_idx, plan in enumerate(proposals):
+            plan_action = plan.get("action", "")
+            plan_summary = plan.get("summary", "")
+            section_prefix = f"Action {plan_idx + 1}: " if len(proposals) > 1 else ""
 
-        if detail_lines:
-            add_section("Action Input", detail_lines, color=CYAN)
+            detail_lines: list[str] = []
+            if plan_action == "spawn":
+                tasks = plan.get("tasks", [])
+                for i, task in enumerate(tasks):
+                    desc = task.get("description", "").strip()
+                    if desc:
+                        lines = desc.splitlines()
+                        detail_lines.append(f"[{i}] {lines[0]}")
+                        for line in lines[1:]:
+                            detail_lines.append(f"    {line}")
+                    else:
+                        detail_lines.append(f"[{i}] (no description)")
+            elif plan_action == "literature_search":
+                query = plan.get("search_query", "")
+                context = plan.get("search_context", "")
+                if query:
+                    detail_lines.append(f"Query:   {query}")
+                if context:
+                    for line in context.strip().splitlines():
+                        detail_lines.append(f"Context: {line}")
+            elif plan_action == "write_items":
+                items = plan.get("items", [])
+                for item in items:
+                    slug = item.get("slug", "?")
+                    content = item.get("content", "")
+                    ext = ".lean" if item.get("format") == "lean" else ".md"
+                    if content:
+                        first = content.strip().splitlines()[0] if content.strip() else ""
+                        detail_lines.append(f"• {slug}{ext} — {first}")
+                    else:
+                        detail_lines.append(f"• {slug}{ext} (delete)")
+            elif plan_action == "read_items":
+                slugs = plan.get("read", [])
+                if slugs:
+                    detail_lines.append(", ".join(slugs))
+            elif plan_action == "write_whiteboard":
+                wb = plan.get("whiteboard", "")
+                if wb:
+                    for line in wb.strip().splitlines()[:8]:
+                        detail_lines.append(line)
 
-        # Per-item full content sections for write_items
-        if action == "write_items":
-            items = plan.get("items", [])
-            for item in items:
-                slug = item.get("slug", "?")
-                content = item.get("content", "")
-                ext = ".lean" if item.get("format") == "lean" else ".md"
-                if content:
-                    item_lines = content.rstrip().splitlines()
-                    add_section(f"{slug}{ext}", item_lines, color=GREEN)
-                else:
-                    add_section(f"{slug}{ext}", [f"{DIM}(delete){RESET}"], color=RED)
+            if detail_lines:
+                ac = ACTION_STYLE.get(plan_action, WHITE)
+                add_section(
+                    f"{section_prefix}{ac}{plan_action}{RESET} {DIM}—{RESET} {plan_summary}",
+                    detail_lines, color=CYAN,
+                )
+
+            # Per-item full content sections for write_items
+            if plan_action == "write_items":
+                items = plan.get("items", [])
+                for item in items:
+                    slug = item.get("slug", "?")
+                    content = item.get("content", "")
+                    ext = ".lean" if item.get("format") == "lean" else ".md"
+                    if content:
+                        item_lines = content.rstrip().splitlines()
+                        add_section(f"{slug}{ext}", item_lines, color=GREEN)
+                    else:
+                        add_section(f"{slug}{ext}", [f"{DIM}(delete){RESET}"], color=RED)
 
         self._step_detail_text = "\n".join(parts) if parts else "  (no detail)"
         self._step_detail_scroll = min(

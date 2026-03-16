@@ -100,6 +100,8 @@ def _tool_lean_verify(
     # Prepend stored prefix if any
     store = _worker_stores.get(worker_id, "")
     full_code = merge_lean_imports(store, code) if store else code
+    if store:
+        args["_store_prefix"] = store  # expose to TUI detail page
 
     slug = f"worker_verify_{worker_id}"
     path = lean_work_dir.make_file(slug, full_code)
@@ -118,6 +120,9 @@ def _tool_lean_verify(
             # Warnings only, no errors — treat as success
             status = "ok"
         result = feedback
+    if store:
+        store_lines = len(store.splitlines())
+        result = f"({store_lines} lines from lean_store were automatically prepended)\n{result}"
     logger.info("[%s] lean_verify: %s", worker_id, status)
     return (result, status)
 

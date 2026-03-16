@@ -640,8 +640,13 @@ class StepsMixin:
             for line in lines:
                 parts.append(f"  {line}" if line else "")
 
-        # Action Input (arguments)
+        # Stored prefix (lean_verify with lean_store)
         args = entry.get("args", {})
+        store_prefix = args.get("_store_prefix", "")
+        if store_prefix:
+            add_section("Stored Prefix", store_prefix.splitlines(), color=DIM)
+
+        # Action Input (arguments)
         input_lines: list[str] = []
         if "code" in args:
             input_lines.extend(args["code"].splitlines())
@@ -649,7 +654,7 @@ class StepsMixin:
             input_lines.append(args["query"])
         # Show any other args as key: value
         for key, val in args.items():
-            if key in ("code", "query"):
+            if key in ("code", "query", "_store_prefix"):
                 continue
             val_str = str(val)
             if len(val_str) > 200:

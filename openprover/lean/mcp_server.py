@@ -85,7 +85,11 @@ def lean_verify(code: str) -> str:
     full_code = merge_lean_imports(_store, code) if _store else code
     path = work_dir.make_file("mcp_verify", full_code)
     success, feedback, _cmd_info = run_lean_check(path, project_dir)
-    return "OK — no errors" if success else feedback
+    result = "OK — no errors" if success else feedback
+    if _store:
+        store_lines = len(_store.splitlines())
+        result = f"({store_lines} lines from lean_store were automatically prepended)\n{result}"
+    return result
 
 
 @mcp.tool()

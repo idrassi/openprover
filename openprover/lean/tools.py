@@ -4,9 +4,12 @@ import asyncio
 import logging
 import time
 
-from .core import LeanWorkDir, run_lean_check
+from .core import LeanWorkDir, merge_lean_imports, run_lean_check
 
 logger = logging.getLogger("openprover.lean")
+
+# Per-worker store state (vLLM path only; MCP uses per-process module state)
+_worker_stores: dict[str, str] = {}
 
 WORKER_TOOLS = [
     {
@@ -20,6 +23,23 @@ WORKER_TOOLS = [
                     "code": {
                         "type": "string",
                         "description": "Complete Lean 4 source code to verify.",
+                    },
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lean_store",
+            "description": "Store a verified Lean 4 snippet (lemma, definition, etc.) into the persistent prefix. Stored code is automatically prepended to all subsequent lean_verify calls, so you don't need to repeat it. The snippet must compile without errors or sorry. Imports are automatically deduplicated.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Lean 4 code to store (must compile without errors or sorry).",
                     },
                 },
                 "required": ["code"],
@@ -57,6 +77,8 @@ def execute_worker_tool(
     """Execute a worker tool call. Returns (result_text, status)."""
     if name == "lean_verify":
         return _tool_lean_verify(args, worker_id, lean_work_dir, lean_project_dir)
+    if name == "lean_store":
+        return _tool_lean_store(args, worker_id, lean_work_dir, lean_project_dir)
     if name == "lean_search":
         return _tool_lean_search(args, worker_id, lean_explore_service)
     return (f"Unknown tool: {name}", "error")
@@ -75,8 +97,12 @@ def _tool_lean_verify(
     if not lean_work_dir:
         return ("Lean project not configured", "error")
 
+    # Prepend stored prefix if any
+    store = _worker_stores.get(worker_id, "")
+    full_code = merge_lean_imports(store, code) if store else code
+
     slug = f"worker_verify_{worker_id}"
-    path = lean_work_dir.make_file(slug, code)
+    path = lean_work_dir.make_file(slug, full_code)
     success, feedback, _cmd_info = run_lean_check(path, lean_project_dir)
     if success:
         status = "ok"
@@ -94,6 +120,42 @@ def _tool_lean_verify(
         result = feedback
     logger.info("[%s] lean_verify: %s", worker_id, status)
     return (result, status)
+
+
+def _tool_lean_store(
+    args: dict,
+    worker_id: str,
+    lean_work_dir: LeanWorkDir | None,
+    lean_project_dir,
+) -> tuple[str, str]:
+    """Store a verified Lean snippet into the worker's persistent prefix."""
+    code = args.get("code", "")
+    if not code:
+        return ("No code provided", "error")
+    if not lean_work_dir:
+        return ("Lean project not configured", "error")
+
+    store = _worker_stores.get(worker_id, "")
+    candidate = merge_lean_imports(store, code)
+
+    slug = f"worker_store_{worker_id}"
+    path = lean_work_dir.make_file(slug, candidate)
+    success, feedback, _cmd_info = run_lean_check(path, lean_project_dir)
+
+    if not success:
+        has_error = any(": error:" in line for line in feedback.splitlines())
+        if has_error:
+            logger.info("[%s] lean_store: rejected (errors)", worker_id)
+            return (feedback, "error")
+        # Warnings only — check for sorry
+        if "sorry" in feedback.lower():
+            logger.info("[%s] lean_store: rejected (sorry)", worker_id)
+            return (f"Store rejected: code contains sorry\n{feedback}", "error")
+        # Non-sorry warnings are acceptable
+
+    _worker_stores[worker_id] = candidate
+    logger.info("[%s] lean_store: ok (%d chars)", worker_id, len(candidate))
+    return (f"OK — stored.\n\nCurrent store:\n```lean\n{candidate}\n```", "ok")
 
 
 def _tool_lean_search(

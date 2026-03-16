@@ -28,6 +28,7 @@ ACTION_STYLE = {
 
 TOOL_STYLE = {
     "lean_verify": CYAN,
+    "lean_store": GREEN,
     "lean_search": MAGENTA,
 }
 

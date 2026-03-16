@@ -15,7 +15,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from .core import LeanWorkDir, run_lean_check
+from .core import LeanWorkDir, merge_lean_imports, run_lean_check
 
 mcp = FastMCP("lean_tools")
 
@@ -23,6 +23,7 @@ mcp = FastMCP("lean_tools")
 _project_dir: Path | None = None
 _work_dir: LeanWorkDir | None = None
 _search_service = None
+_store: str = ""  # per-process store (each worker gets its own MCP subprocess)
 
 
 def _get_project_dir() -> Path:
@@ -76,14 +77,37 @@ def _get_search_service():
 
 @mcp.tool()
 def lean_verify(code: str) -> str:
-    """Verify Lean 4 code. Returns compiler output (errors/warnings or OK)."""
+    """Verify Lean 4 code. Returns compiler output (errors/warnings or OK). Code from lean_store is automatically prepended."""
     if not code.strip():
         raise ValueError("no code provided")
     work_dir = _get_work_dir()
     project_dir = _get_project_dir()
-    path = work_dir.make_file("mcp_verify", code)
+    full_code = merge_lean_imports(_store, code) if _store else code
+    path = work_dir.make_file("mcp_verify", full_code)
     success, feedback, _cmd_info = run_lean_check(path, project_dir)
     return "OK — no errors" if success else feedback
+
+
+@mcp.tool()
+def lean_store(code: str) -> str:
+    """Store a verified Lean 4 snippet (lemma, definition, etc.) into the persistent prefix. Stored code is automatically prepended to all subsequent lean_verify calls. The snippet must compile without errors or sorry. Imports are automatically deduplicated."""
+    global _store
+    if not code.strip():
+        raise ValueError("no code provided")
+    work_dir = _get_work_dir()
+    project_dir = _get_project_dir()
+    candidate = merge_lean_imports(_store, code)
+    path = work_dir.make_file("mcp_store", candidate)
+    success, feedback, _cmd_info = run_lean_check(path, project_dir)
+    if not success:
+        has_error = any(": error:" in line for line in feedback.splitlines())
+        if has_error:
+            return feedback
+        if "sorry" in feedback.lower():
+            return f"Store rejected: code contains sorry\n{feedback}"
+        # Non-sorry warnings are acceptable
+    _store = candidate
+    return f"OK — stored.\n\nCurrent store:\n```lean\n{candidate}\n```"
 
 
 @mcp.tool()

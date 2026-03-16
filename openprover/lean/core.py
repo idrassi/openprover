@@ -132,6 +132,34 @@ def run_lean_check(lean_file: Path, project_dir: Path,
         return (False, "lake command not found — is Lean/Lake installed and on PATH?", cmd_info)
 
 
+def merge_lean_imports(existing: str, new_snippet: str) -> str:
+    """Merge two Lean code blocks, deduplicating imports at the top."""
+    import_lines: list[str] = []
+    seen_imports: set[str] = set()
+    body_existing: list[str] = []
+    body_new: list[str] = []
+
+    for line in existing.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("import "):
+            if stripped not in seen_imports:
+                seen_imports.add(stripped)
+                import_lines.append(line)
+        else:
+            body_existing.append(line)
+
+    for line in new_snippet.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("import "):
+            if stripped not in seen_imports:
+                seen_imports.add(stripped)
+                import_lines.append(line)
+        else:
+            body_new.append(line)
+
+    return '\n'.join(import_lines + body_existing + body_new)
+
+
 class LeanWorkDir:
     """Manages the OpenProver-{id} subdirectory within a Lean project."""
 

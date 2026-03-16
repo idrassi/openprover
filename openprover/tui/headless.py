@@ -62,7 +62,8 @@ class HeadlessTUI:
     def step_complete(self, step_num: int,
                       action: str, summary: str, detail: str = "",
                       rejected: bool = False, interrupted: bool = False,
-                      feedback: str = "") -> int:
+                      feedback: str = "",
+                      plans: list[dict] | None = None) -> int:
         suffix = []
         if rejected:
             suffix.append("rejected")

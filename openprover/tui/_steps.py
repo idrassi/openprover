@@ -86,10 +86,31 @@ class StepsMixin:
                 self._tab_log(planner, f'  {DIM}lean_proof_slug: {val}{RESET}')
 
     def _format_step_line(self, entry: dict) -> str:
+        plans = entry.get("plans") or []
         action = entry.get("action", "")
         summary = entry.get("summary", "")
-        color = ACTION_STYLE.get(action, "")
-        line = f'{color}■{RESET} {BOLD}{action}{RESET} {DIM}—{RESET} {summary}'
+
+        # Render multi-action steps: show each action on its own line
+        if len(plans) > 1:
+            lines_parts: list[str] = []
+            for plan in plans:
+                a = plan.get("action", "")
+                s = plan.get("summary", "")
+                c = ACTION_STYLE.get(a, "")
+                if a == "spawn":
+                    # Use per-task summaries for spawn
+                    task_summaries = [
+                        t.get("summary", "").strip()
+                        for t in plan.get("tasks", [])
+                        if t.get("summary", "").strip()
+                    ]
+                    s = "; ".join(task_summaries) if task_summaries else s
+                lines_parts.append(f'{c}■{RESET} {BOLD}{a}{RESET} {DIM}—{RESET} {s}')
+            line = "\n".join(lines_parts)
+        else:
+            color = ACTION_STYLE.get(action, "")
+            line = f'{color}■{RESET} {BOLD}{action}{RESET} {DIM}—{RESET} {summary}'
+
         # Show per-worker task summaries with verdicts for spawn actions
         if action == "spawn":
             worker_tabs = entry.get("worker_tabs") or []
@@ -140,7 +161,8 @@ class StepsMixin:
     def step_complete(self, step_num: int,
                       action: str, summary: str, detail: str = "",
                       rejected: bool = False, interrupted: bool = False,
-                      feedback: str = "") -> int:
+                      feedback: str = "",
+                      plans: list[dict] | None = None) -> int:
         planner = self.tabs[0]
         trace = planner.last_trace
         output = planner.last_output
@@ -159,6 +181,7 @@ class StepsMixin:
             "interrupted": interrupted,
             "feedback": feedback.strip(),
             "whiteboard": getattr(self, "whiteboard", ""),
+            "plans": plans or [],
         }
         line = self._format_step_line(entry)
         self._tab_log(planner, line, step_idx=idx)
@@ -413,11 +436,24 @@ class StepsMixin:
             else:
                 status_badge = f"{GREEN}● completed{RESET}"
 
-        self._step_detail_title = (
-            f"Step {entry.get('step_num', '?')}: "
-            f"{action_color}{action}{RESET} {DIM}—{RESET} {summary}"
-            f"  {status_badge}"
-        )
+        plans = entry.get("plans") or []
+        if len(plans) > 1:
+            action_labels = []
+            for p in plans:
+                a = p.get("action", "")
+                ac = ACTION_STYLE.get(a, WHITE)
+                action_labels.append(f"{ac}{a}{RESET}")
+            self._step_detail_title = (
+                f"Step {entry.get('step_num', '?')}: "
+                + f" {DIM}+{RESET} ".join(action_labels)
+                + f"  {status_badge}"
+            )
+        else:
+            self._step_detail_title = (
+                f"Step {entry.get('step_num', '?')}: "
+                f"{action_color}{action}{RESET} {DIM}—{RESET} {summary}"
+                f"  {status_badge}"
+            )
 
         parts: list[str] = []
 
@@ -458,10 +494,48 @@ class StepsMixin:
         if planner_lines:
             add_section("Planner Output", planner_lines, color=BLUE)
 
-        # Action Input
-        detail = (entry.get("detail") or "").strip()
-        if detail:
-            add_section("Action Input", detail.splitlines(), color=CYAN)
+        # Show non-spawn actions from the plans list (multi-action steps)
+        if len(plans) > 1:
+            for plan in plans:
+                pa = plan.get("action", "")
+                ps = plan.get("summary", "")
+                if pa == "spawn":
+                    continue  # spawn is shown separately below
+                pac = ACTION_STYLE.get(pa, WHITE)
+                detail_lines: list[str] = []
+                if pa == "write_whiteboard":
+                    wb = plan.get("whiteboard", "")
+                    if wb:
+                        for wline in wb.strip().splitlines()[:10]:
+                            detail_lines.append(wline)
+                        total = len(wb.strip().splitlines())
+                        if total > 10:
+                            detail_lines.append(f"{DIM}… ({total - 10} more lines){RESET}")
+                elif pa == "write_items":
+                    items = plan.get("items", [])
+                    for item in items:
+                        slug = item.get("slug", "?")
+                        content = item.get("content", "")
+                        ext = ".lean" if item.get("format") == "lean" else ".md"
+                        if content:
+                            first = content.strip().splitlines()[0] if content.strip() else ""
+                            detail_lines.append(f"• {slug}{ext} — {first}")
+                        else:
+                            detail_lines.append(f"• {slug}{ext} (delete)")
+                elif pa == "read_items":
+                    slugs = plan.get("read", [])
+                    if slugs:
+                        detail_lines.append(", ".join(slugs))
+                if detail_lines:
+                    add_section(
+                        f"{pac}{pa}{RESET} {DIM}—{RESET} {ps}",
+                        detail_lines, color=CYAN,
+                    )
+        else:
+            # Single-action step: show detail string
+            detail = (entry.get("detail") or "").strip()
+            if detail:
+                add_section("Action Input", detail.splitlines(), color=CYAN)
 
         if action == "spawn":
             worker_tabs = entry.get("worker_tabs") or []

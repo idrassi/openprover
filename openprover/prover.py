@@ -642,6 +642,7 @@ class Prover:
 
         self._step_idx = self.tui.step_complete(
             self.step_num, primary_action, primary_summary,
+            plans=plans,
         )
 
         # Execute all plans sequentially

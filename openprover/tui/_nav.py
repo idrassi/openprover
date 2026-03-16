@@ -150,8 +150,8 @@ class NavMixin:
         start = max(end - visible, 0)
         target_start, target_end = sel
 
-        if target_start >= start and target_end < end:
-            pass  # Already fully visible, don't scroll
+        if target_start >= start:
+            pass  # Top of selection is visible, don't scroll
         else:
             # Scroll so target_start aligns with top of screen
             new_end = min(total, target_start + visible)

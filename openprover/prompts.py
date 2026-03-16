@@ -176,7 +176,7 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         "# omit content to delete\n"
         f"{_TOML_CLOSE_TAG}\n\n"
         "Slugs can contain `/` for subdirectories, e.g. `\"attempts/induction-v1\"`, `\"lemmas/helper\"`.\n\n"
-        f"**spawn**: one or more `[[tasks]]` sections with `description = {_TQ}...{_TQ}`\n"
+        f"**spawn**: one or more `[[tasks]]` sections, each with `summary = \"...\"` (short label) and `description = {_TQ}...{_TQ}` (full task)\n"
         f"**write_whiteboard**: `whiteboard = {_TQ}...{_TQ}` (complete replacement of current whiteboard)\n"
     )
     if not isolation:
@@ -361,7 +361,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         f"Each block is wrapped in {_TOML_OPEN_TAG} ... {_TOML_CLOSE_TAG} tags and contains EXACTLY ONE action.\n"
         "\n"
         "**Rules:**\n"
-        "- Each block MUST have `action` and `summary` fields.\n"
+        "- Each block MUST have `action` and `summary` fields. Exception: `spawn` — the summary goes on each `[[tasks]]` entry instead.\n"
         "- At most ONE `spawn` block per step (spawning is expensive).\n"
         "- Low-impact actions (write_whiteboard, read_items, read_theorem, write_items) can be combined freely with each other and with spawn.\n"
         "- Typical pattern: write_whiteboard + spawn, or write_whiteboard + write_items + spawn.\n"
@@ -377,10 +377,16 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         f"{_TOML_CLOSE_TAG}\n"
         "\n"
         f"{_TOML_OPEN_TAG}\n"
-        f'action = "spawn"  # one of: {", ".join(available_actions)}\n'
-        'summary = "One-line description for the log"\n'
-        "# Action-specific fields below\n"
+        f'action = "spawn"\n'
+        "\n"
+        "[[tasks]]\n"
+        'summary = "Short label for this worker"\n'
+        f'description = {_TQ}\n'
+        "Full task instructions here...\n"
+        f'{_TQ}\n'
         f"{_TOML_CLOSE_TAG}\n"
+        "\n"
+        f"Valid actions: {', '.join(available_actions)}\n"
         "\n"
         "## Action-specific TOML fields\n"
         "\n"

@@ -615,7 +615,16 @@ class Prover:
         )
         primary_plan = plans[-1]  # last action is typically the "main" one
         primary_action = primary_plan["action"]
-        primary_summary = primary_plan.get("summary", "")
+        # For spawn, derive summary from per-task summaries
+        if primary_action == "spawn":
+            task_summaries = [
+                t.get("summary", "").strip()
+                for t in primary_plan.get("tasks", [])
+                if t.get("summary", "").strip()
+            ]
+            primary_summary = "; ".join(task_summaries) if task_summaries else primary_plan.get("summary", "")
+        else:
+            primary_summary = primary_plan.get("summary", "")
         logger.info("Actions: %s", actions_summary)
 
         # Record planner output for step history
@@ -1056,7 +1065,8 @@ class Prover:
         for i, task in enumerate(tasks):
             wid = f"worker_{self.step_num}_{i}"
             desc = task.get("description", "")
-            label = f"Worker {i}"
+            task_summary = task.get("summary", "").strip()
+            label = f"Worker {i}: {task_summary}" if task_summary else f"Worker {i}"
             self.tui.add_worker_tab(wid, label, task_description=desc)
             worker_ids.append(wid)
 
@@ -1589,6 +1599,9 @@ class Prover:
         if "tasks" in plan:
             for task in plan["tasks"]:
                 lines.append("\n[[tasks]]")
+                task_summary = task.get("summary", "")
+                if task_summary:
+                    lines.append(f'summary = "{task_summary}"')
                 desc = task.get("description", "")
                 lines.append(f'description = """\n{desc}\n"""')
         (step_dir / "planner.toml").write_text("\n".join(lines) + "\n")

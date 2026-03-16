@@ -35,14 +35,9 @@ class StepsMixin:
         if action == "spawn":
             tasks = plan.get("tasks", [])
             for i, task in enumerate(tasks):
-                desc = task.get("description", "").strip()
-                if desc:
-                    lines = desc.splitlines()
-                    self._tab_log(planner, f'  {DIM}[{i}]{RESET} {lines[0]}')
-                    for line in lines[1:]:
-                        self._tab_log(planner, f'      {line}')
-                else:
-                    self._tab_log(planner, f'  {DIM}[{i}]{RESET} (no description)')
+                task_summary = task.get("summary", "").strip()
+                label = task_summary if task_summary else "(no summary)"
+                self._tab_log(planner, f'  {DIM}[{i}]{RESET} {label}')
 
         elif action == "literature_search":
             query = plan.get("search_query", "")
@@ -104,9 +99,7 @@ class StepsMixin:
                 label = getattr(tab, "label", "")
                 if not label.startswith("Worker"):
                     continue  # skip verifier tabs
-                task_desc = getattr(tab, "task_description", "").strip()
-                first_line = task_desc.split("\n")[0][:80] if task_desc else "(no description)"
-                line += f'\n  {DIM}•{RESET} {first_line}'
+                line += f'\n  {DIM}•{RESET} {label}'
                 verdict = verdicts.get(widx, "")
                 if verdict:
                     if "CORRECT" in verdict and "FLAWED" not in verdict:
@@ -305,14 +298,15 @@ class StepsMixin:
             if plan_action == "spawn":
                 tasks = plan.get("tasks", [])
                 for i, task in enumerate(tasks):
+                    task_summary = task.get("summary", "").strip()
                     desc = task.get("description", "").strip()
+                    header = f"[{i}] {task_summary}" if task_summary else f"[{i}]"
                     if desc:
-                        lines = desc.splitlines()
-                        detail_lines.append(f"[{i}] {lines[0]}")
-                        for line in lines[1:]:
+                        detail_lines.append(header)
+                        for line in desc.splitlines():
                             detail_lines.append(f"    {line}")
                     else:
-                        detail_lines.append(f"[{i}] (no description)")
+                        detail_lines.append(f"{header} (no description)")
             elif plan_action == "literature_search":
                 query = plan.get("search_query", "")
                 context = plan.get("search_context", "")

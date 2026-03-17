@@ -388,7 +388,11 @@ class Prover:
                 pass
 
     def _maybe_respawn_interrupted_workers(self):
-        """On resume, if the last step was an interrupted spawn, re-run it."""
+        """On resume, if the last step was an interrupted spawn, re-run it.
+
+        Only re-spawns workers that were actually interrupted; already-finished
+        workers are carried forward as pre-completed results.
+        """
         if self.step_num < 1:
             return
         last_step_dir = self.work_dir / "steps" / f"step_{self.step_num:03d}"
@@ -409,17 +413,82 @@ class Prover:
         task_files = sorted(workers_dir.glob("task_*.md"))
         if not task_files:
             return
-        tasks = [{"description": f.read_text()} for f in task_files]
-        logger.info("Re-spawning %d interrupted worker(s) from step %d",
-                     len(tasks), self.step_num)
-        self.tui.log(
-            f"Re-spawning {len(tasks)} interrupted worker(s) from step {self.step_num}",
-            color="cyan",
-        )
+
+        # Determine which workers were interrupted vs completed by parsing
+        # the [[workers]] entries in step_meta.toml
+        interrupted_indices = set()
+        meta_path = last_step_dir / "step_meta.toml"
+        if meta_path.exists():
+            meta_text = meta_path.read_text()
+            # Parse [[workers]] blocks to find interrupted ones
+            for block in re.split(r'\[\[workers\]\]', meta_text)[1:]:
+                idx_m = re.search(r'^index\s*=\s*(\d+)', block, re.MULTILINE)
+                err_m = re.search(r'^error\s*=\s*"([^"]*)"', block, re.MULTILINE)
+                if idx_m and err_m and err_m.group(1) == "interrupted":
+                    interrupted_indices.add(int(idx_m.group(1)))
+
+        # If we couldn't parse worker metadata, fall back to respawning all
+        if not interrupted_indices:
+            # Check if any result files are missing or contain the interrupted marker
+            for i in range(len(task_files)):
+                result_file = workers_dir / f"result_{i}.md"
+                if not result_file.exists():
+                    interrupted_indices.add(i)
+                else:
+                    content = result_file.read_text().strip()
+                    if not content or content == "(terminated by user)":
+                        interrupted_indices.add(i)
+            # If still nothing found interrupted, respawn all as fallback
+            if not interrupted_indices:
+                interrupted_indices = set(range(len(task_files)))
+
+        # Build tasks list for only interrupted workers; carry forward completed results
+        tasks_to_respawn = []
+        completed_workers = {}  # {original_index: result_text}
+        for i, f in enumerate(task_files):
+            if i in interrupted_indices:
+                tasks_to_respawn.append({"description": f.read_text(),
+                                         "_original_index": i})
+            else:
+                result_file = workers_dir / f"result_{i}.md"
+                result = result_file.read_text() if result_file.exists() else ""
+                completed_workers[i] = {
+                    "description": f.read_text(),
+                    "result": result,
+                }
+                # Also carry verifier results if present
+                vresult_file = workers_dir / f"verifier_result_{i}.md"
+                if vresult_file.exists():
+                    completed_workers[i]["verifier_result"] = vresult_file.read_text()
+
+        if not tasks_to_respawn:
+            logger.info("All workers already completed for step %d", self.step_num)
+            return
+
+        n_done = len(completed_workers)
+        n_todo = len(tasks_to_respawn)
+        logger.info("Re-spawning %d interrupted worker(s) from step %d "
+                     "(%d already completed)",
+                     n_todo, self.step_num, n_done)
+        if n_done:
+            self.tui.log(
+                f"Re-spawning {n_todo} interrupted worker(s) from step "
+                f"{self.step_num} ({n_done} already finished — skipping)",
+                color="cyan",
+            )
+        else:
+            self.tui.log(
+                f"Re-spawning {n_todo} interrupted worker(s) from step {self.step_num}",
+                color="cyan",
+            )
         # Back up step_num so the main loop replays this step number
         self.step_num -= 1
         # Store tasks for _do_step to pick up
-        self._respawn_plan = {"action": "spawn", "tasks": tasks}
+        self._respawn_plan = {
+            "action": "spawn",
+            "tasks": tasks_to_respawn,
+            "completed_workers": completed_workers,
+        }
 
     def _setup_logging(self):
         """Configure file logging to trace.log in the run directory."""
@@ -465,7 +534,11 @@ class Prover:
             self._respawn_plan = None
             step_dir = self.work_dir / "steps" / f"step_{self.step_num:03d}"
             step_dir.mkdir(parents=True, exist_ok=True)
-            summary = f"Re-spawning {len(plan['tasks'])} interrupted worker(s)"
+            n_tasks = len(plan['tasks'])
+            n_done = len(plan.get('completed_workers', {}))
+            summary = f"Re-spawning {n_tasks} interrupted worker(s)"
+            if n_done:
+                summary += f" ({n_done} already finished)"
             self._current_planner_result = "(respawn of interrupted workers)"
             self._current_step_action = "spawn"
             self._current_step_summary = summary
@@ -1052,7 +1125,8 @@ class Prover:
     def _handle_spawn(self, plan: dict, step_dir: Path,
                       planner_resp: dict | None = None) -> str:
         tasks = plan.get("tasks", [])
-        if not tasks:
+        completed_workers = plan.get("completed_workers", {})
+        if not tasks and not completed_workers:
             self.tui.log("spawn but no tasks specified", color="yellow")
             self._save_step_meta(step_dir, status="ok", action="spawn",
                                  resp=planner_resp, error="No tasks specified")
@@ -1084,39 +1158,41 @@ class Prover:
         worker_resps = [None] * len(tasks)
         n = len(tasks)
         done_count = 0
-        self.tui.set_waiting_status(f"waiting for {n} worker(s) (0/{n} finished)")
+        if n:
+            self.tui.set_waiting_status(f"waiting for {n} worker(s) (0/{n} finished)")
 
-        with ThreadPoolExecutor(max_workers=n) as pool:
-            futures = {}
-            for i, task in enumerate(tasks):
-                # Save task
-                desc = task.get("description", "")
-                (workers_dir / f"task_{i}.md").write_text(desc)
+        if n:
+            with ThreadPoolExecutor(max_workers=n) as pool:
+                futures = {}
+                for i, task in enumerate(tasks):
+                    # Save task
+                    desc = task.get("description", "")
+                    (workers_dir / f"task_{i}.md").write_text(desc)
 
-                archive = workers_dir / f"worker_{i}_call.json"
-                future = pool.submit(self._run_worker, task, worker_ids[i], archive)
-                futures[future] = i
+                    archive = workers_dir / f"worker_{i}_call.json"
+                    future = pool.submit(self._run_worker, task, worker_ids[i], archive)
+                    futures[future] = i
 
-            pending = set(futures.keys())
-            while pending:
-                done_set, pending = wait(pending, timeout=0.5,
-                                         return_when=FIRST_COMPLETED)
-                for future in done_set:
-                    idx = futures[future]
-                    try:
-                        worker_resps[idx] = future.result()
-                    except Exception as e:
-                        worker_resps[idx] = {
-                            "result": f"Worker error: {e}", "cost": 0.0,
-                            "duration_ms": 0, "raw": {}, "error": str(e),
-                        }
-                    done_count += 1
-                    logger.info("Worker %d/%d done", done_count, n)
-                    self.tui.mark_worker_done(worker_ids[idx])
-                    if done_count < n:
-                        self.tui.set_waiting_status(
-                            f"waiting for {n} worker(s) ({done_count}/{n} finished)"
-                        )
+                pending = set(futures.keys())
+                while pending:
+                    done_set, pending = wait(pending, timeout=0.5,
+                                             return_when=FIRST_COMPLETED)
+                    for future in done_set:
+                        idx = futures[future]
+                        try:
+                            worker_resps[idx] = future.result()
+                        except Exception as e:
+                            worker_resps[idx] = {
+                                "result": f"Worker error: {e}", "cost": 0.0,
+                                "duration_ms": 0, "raw": {}, "error": str(e),
+                            }
+                        done_count += 1
+                        logger.info("Worker %d/%d done", done_count, n)
+                        self.tui.mark_worker_done(worker_ids[idx])
+                        if done_count < n:
+                            self.tui.set_waiting_status(
+                                f"waiting for {n} worker(s) ({done_count}/{n} finished)"
+                            )
 
         self.tui.set_waiting_status("")
         self._workers_active = False
@@ -1141,27 +1217,90 @@ class Prover:
         # ── Verifier phase ──
         verifier_resps = self._run_verifiers(tasks, worker_resps, workers_dir)
 
-        # Save results and build prev_output
-        parts = []
-        for i, (task, wresp) in enumerate(zip(tasks, worker_resps)):
-            desc = task.get("description", "")
-            first_line = desc.split("\n")[0][:60] if desc else f"Worker {i}"
-            result = wresp["result"] if wresp else ""
-            parts.append(f"## Worker {i}: {first_line}\n\n{result}")
-            (workers_dir / f"result_{i}.md").write_text(result or "")
-            # Append verifier result if available
-            if i in verifier_resps:
-                v_result = verifier_resps[i].get("result", "")
-                parts.append(f"## Verification of Worker {i}\n\n{v_result}")
-                (workers_dir / f"verifier_result_{i}.md").write_text(v_result or "")
-            # Save tool calls log
-            tc_log = wresp.get("tool_calls_log", []) if wresp else []
-            if tc_log:
-                (workers_dir / f"tool_calls_{i}.json").write_text(
-                    json.dumps(tc_log, indent=2, default=str)
-                )
+        # Build combined output: merge completed_workers (from prior run)
+        # with freshly-spawned worker results.
+        # We reconstruct the full task list in original index order.
+        all_parts = []
 
-        self._push_output("\n\n".join(parts))
+        if completed_workers:
+            # Merge: build entries keyed by original worker index
+            all_indices = sorted(
+                set(completed_workers.keys())
+                | {t["_original_index"] for t in tasks if "_original_index" in t}
+            )
+            # Map new worker index -> original index
+            new_to_orig = {}
+            for ni, task in enumerate(tasks):
+                if "_original_index" in task:
+                    new_to_orig[ni] = task["_original_index"]
+
+            for orig_idx in all_indices:
+                if orig_idx in completed_workers:
+                    cw = completed_workers[orig_idx]
+                    desc = cw["description"]
+                    result = cw["result"]
+                    first_line = desc.split("\n")[0][:60] if desc else f"Worker {orig_idx}"
+                    all_parts.append(
+                        f"## Worker {orig_idx}: {first_line}\n\n{result}"
+                    )
+                    # Carry forward verifier result if present
+                    if cw.get("verifier_result"):
+                        all_parts.append(
+                            f"## Verification of Worker {orig_idx}\n\n"
+                            f"{cw['verifier_result']}"
+                        )
+                else:
+                    # Find this in the new workers
+                    for ni, oi in new_to_orig.items():
+                        if oi == orig_idx:
+                            wresp = worker_resps[ni]
+                            desc = tasks[ni].get("description", "")
+                            first_line = (desc.split("\n")[0][:60]
+                                          if desc else f"Worker {orig_idx}")
+                            result = wresp["result"] if wresp else ""
+                            all_parts.append(
+                                f"## Worker {orig_idx}: {first_line}\n\n{result}"
+                            )
+                            (workers_dir / f"result_{orig_idx}.md").write_text(
+                                result or "")
+                            if ni in verifier_resps:
+                                v_result = verifier_resps[ni].get("result", "")
+                                all_parts.append(
+                                    f"## Verification of Worker {orig_idx}"
+                                    f"\n\n{v_result}"
+                                )
+                                (workers_dir / f"verifier_result_{orig_idx}.md"
+                                 ).write_text(v_result or "")
+                            tc_log = (wresp.get("tool_calls_log", [])
+                                      if wresp else [])
+                            if tc_log:
+                                (workers_dir / f"tool_calls_{orig_idx}.json"
+                                 ).write_text(
+                                    json.dumps(tc_log, indent=2, default=str))
+                            break
+        else:
+            # Normal path (no completed_workers to merge)
+            for i, (task, wresp) in enumerate(zip(tasks, worker_resps)):
+                desc = task.get("description", "")
+                first_line = desc.split("\n")[0][:60] if desc else f"Worker {i}"
+                result = wresp["result"] if wresp else ""
+                all_parts.append(f"## Worker {i}: {first_line}\n\n{result}")
+                (workers_dir / f"result_{i}.md").write_text(result or "")
+                # Append verifier result if available
+                if i in verifier_resps:
+                    v_result = verifier_resps[i].get("result", "")
+                    all_parts.append(
+                        f"## Verification of Worker {i}\n\n{v_result}")
+                    (workers_dir / f"verifier_result_{i}.md").write_text(
+                        v_result or "")
+                # Save tool calls log
+                tc_log = wresp.get("tool_calls_log", []) if wresp else []
+                if tc_log:
+                    (workers_dir / f"tool_calls_{i}.json").write_text(
+                        json.dumps(tc_log, indent=2, default=str)
+                    )
+
+        self._push_output("\n\n".join(all_parts))
 
         # Track worker + verifier output tokens in budget
         for wresp in worker_resps:

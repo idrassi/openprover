@@ -34,6 +34,7 @@ def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
                      answer_reserve: int, history_budget: int):
     """Save run configuration so it can be restored on resume."""
     lines = [
+        f'version = "{__version__}"',
         f'planner_model = "{planner_model}"',
         f'worker_model = "{worker_model}"',
         f'budget_mode = "{budget_mode}"',
@@ -291,6 +292,13 @@ def _cmd_prove():
     if resuming:
         saved = _load_run_config(work_dir)
         if saved:
+            saved_version = saved.get("version", "")
+            if saved_version and saved_version != __version__:
+                parser.error(
+                    f"Version mismatch: run was created with openprover "
+                    f"v{saved_version}, but current version is v{__version__}. "
+                    f"Cannot resume across different versions."
+                )
             # Restore settings from saved config; CLI flags override
             if not args.planner_model and not _cli_flag_given("--model"):
                 args.model = saved.get("planner_model", args.model)

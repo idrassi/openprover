@@ -152,7 +152,7 @@ class HeadlessTUI:
 
     def add_worker_tab(self, tab_id: str, label: str,
                        task_description: str = ""):
-        pass
+        return None
 
     def mark_worker_done(self, tab_id: str):
         pass

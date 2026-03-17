@@ -252,12 +252,29 @@ class RenderMixin:
 
         add_input_section("Worker", [tab.label], color=MAGENTA)
 
-        desc = (tab.task_description or "").strip()
-        add_input_section(
-            "Input",
-            desc.splitlines() if desc else ["(no task description)"],
-            color=CYAN,
-        )
+        is_verifier = bool(tab.worker_task or tab.worker_output)
+
+        if is_verifier:
+            # Verifier detail: show the original worker task and output being verified
+            worker_task = (tab.worker_task or "").strip()
+            add_input_section(
+                "Worker Input",
+                worker_task.splitlines() if worker_task else ["(no task description)"],
+                color=CYAN,
+            )
+            worker_out = (tab.worker_output or "").strip()
+            add_input_section(
+                "Worker Output",
+                worker_out.splitlines() if worker_out else ["(no output)"],
+                color=CYAN,
+            )
+        else:
+            desc = (tab.task_description or "").strip()
+            add_input_section(
+                "Input",
+                desc.splitlines() if desc else ["(no task description)"],
+                color=CYAN,
+            )
 
         if tab.done:
             output_lines: list[str] = []
@@ -269,8 +286,9 @@ class RenderMixin:
                 elif entry.is_output:
                     for tline in entry.text.splitlines():
                         output_lines.append(tline)
+            title = "Verifier Output" if is_verifier else "Output"
             add_input_section(
-                "Output",
+                title,
                 output_lines if output_lines else ["(no output)"],
                 color=GREEN,
             )

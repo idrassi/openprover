@@ -9,7 +9,7 @@ from ._types import _LogEntry, _Tab
 
 class TabsMixin:
 
-    def add_worker_tab(self, tab_id: str, label: str, task_description: str = ""):
+    def add_worker_tab(self, tab_id: str, label: str, task_description: str = "") -> _Tab:
         tab = _Tab(tab_id, label, task_description)
         # Insert before logs tab (always last)
         if self.tabs and self.tabs[-1].id == "logs":
@@ -17,6 +17,7 @@ class TabsMixin:
         else:
             self.tabs.append(tab)
         self._redraw_header()
+        return tab
 
     def mark_worker_done(self, tab_id: str):
         for tab in self.tabs:

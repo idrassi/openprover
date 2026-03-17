@@ -1669,8 +1669,12 @@ class Prover:
             vid = f"verifier_{self.step_num}_{i}"
             label = f"Verify {i}"
             worker_out = wresp.get("result", "")
-            vdesc = f"Verifying Worker {i}\n\n--- Worker {i} Output ---\n{worker_out}"
-            self.tui.add_worker_tab(vid, label, task_description=vdesc)
+            worker_task = task.get("description", "")
+            vdesc = f"Verifying Worker {i}"
+            tab = self.tui.add_worker_tab(vid, label, task_description=vdesc)
+            if tab is not None:
+                tab.worker_task = worker_task
+                tab.worker_output = worker_out
             verifier_ids.append(vid)
 
         self.tui.snapshot_worker_tabs(self.step_num)
@@ -2008,11 +2012,13 @@ class Prover:
                 if v_result_file.exists():
                     v_result = v_result_file.read_text()
                     vid = f"verifier_{step_num}_{tidx}"
-                    vdesc = f"Verifying Worker {tidx}\n\n--- Worker {tidx} Output ---\n{result}"
-                    self.tui.add_worker_tab(
+                    vtab = self.tui.add_worker_tab(
                         vid, f"Verify {tidx}",
-                        task_description=vdesc,
+                        task_description=f"Verifying Worker {tidx}",
                     )
+                    if vtab is not None:
+                        vtab.worker_task = desc
+                        vtab.worker_output = result
                     if v_result:
                         self.tui.worker_output(vid, v_result)
                         verdict = prompts.extract_verdict(v_result)

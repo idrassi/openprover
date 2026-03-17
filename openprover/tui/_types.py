@@ -22,6 +22,7 @@ class _Tab:
                  "toml_pending", "toml_close_tag", "output_non_toml_seen",
                  "output_toml_seen", "is_waiting",
                  "done", "task_description",
+                 "worker_task", "worker_output",
                  "entries", "nav_idx",
                  "pending_actions")
 
@@ -48,6 +49,8 @@ class _Tab:
         self.is_waiting = False
         self.done = False
         self.task_description = task_description
+        self.worker_task = ""      # for verifier tabs: the original worker's task
+        self.worker_output = ""    # for verifier tabs: the worker's output being verified
         # Navigable entries (action entries for worker tabs)
         self.entries: list[dict] = []
         self.nav_idx: int = -1  # -1 = none selected, 0..N-1 = entry index

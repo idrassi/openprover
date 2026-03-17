@@ -281,7 +281,7 @@ class StepsMixin:
             if not lines:
                 return
             if parts:
-                parts.append(f"  {DIM}{'─' * 40}{RESET}")
+                parts.append(f"  {DIM}{'─' * max(self.cols - 4, 20)}{RESET}")
                 parts.append("")
             parts.append(f"  {color}{BOLD}{title}{RESET}")
             for line in lines:
@@ -465,7 +465,7 @@ class StepsMixin:
             if not lines:
                 return
             if parts:
-                parts.append(f"  {DIM}{'─' * 40}{RESET}")
+                parts.append(f"  {DIM}{'─' * max(self.cols - 4, 20)}{RESET}")
                 parts.append("")
             parts.append(f"  {color}{BOLD}{title}{RESET}")
             for line in lines:
@@ -640,7 +640,7 @@ class StepsMixin:
             if not lines:
                 return
             if parts:
-                parts.append(f"  {DIM}{'─' * 40}{RESET}")
+                parts.append(f"  {DIM}{'─' * max(self.cols - 4, 20)}{RESET}")
                 parts.append("")
             parts.append(f"  {color}{BOLD}{title}{RESET}")
             for line in lines:

@@ -238,12 +238,13 @@ class RenderMixin:
     def _build_input_lines(self) -> list[str]:
         tab = self._active_tab
         sections: list[str] = []
+        sep_w = max(self.cols - 4, 20)
 
         def add_input_section(title: str, lines: list[str], color: str = BLUE):
             if not lines:
                 return
             if sections:
-                sections.append(f'  {DIM}{"─" * 40}{RESET}')
+                sections.append(f'  {DIM}{"─" * sep_w}{RESET}')
                 sections.append("")
             sections.append(f"  {color}{BOLD}{title}{RESET}")
             for line in lines:
@@ -590,7 +591,7 @@ class RenderMixin:
                         else f"{CYAN}● running{RESET}"
                     )
                     self._write_raw(f'  {BOLD}Worker Detail{RESET}  {status_badge} {DIM}(esc to return){RESET}\n')
-                    self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
+                    self._write_raw(f'  {DIM}{"─" * max(self.cols - 4, 20)}{RESET}\n')
                     lines = self._build_input_lines()
                     avail = self._input_avail_rows()
                     max_scroll = self._input_max_scroll()
@@ -631,7 +632,7 @@ class RenderMixin:
                 elif self.view == "step_detail":
                     self._write_raw(f'  {BOLD}{self._step_detail_title}{RESET}')
                     self._write_raw(f' {DIM}(esc to return){RESET}\n')
-                    self._write_raw(f'  {DIM}{"─" * 40}{RESET}\n')
+                    self._write_raw(f'  {DIM}{"─" * max(self.cols - 4, 20)}{RESET}\n')
                     lines = self._build_step_detail_lines()
                     avail = self._step_detail_avail_rows()
                     max_scroll = self._step_detail_max_scroll()

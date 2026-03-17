@@ -107,7 +107,7 @@ class InputMixin:
                         i += 1
                         continue
                     if self._can_handle_directly():
-                        if ch in ('r', 'i', 'w', '?', 'a'):
+                        if ch in ('r', 'd', 'w', '?', 'a'):
                             self._process_key(ch)
                             i += 1
                             continue
@@ -390,7 +390,7 @@ class InputMixin:
                     self._redraw()
                     continue
 
-                if self._confirm_selected == 0 and ch in ('r', 'i', 'w', '?'):
+                if self._confirm_selected == 0 and ch in ('r', 'd', 'w', '?'):
                     self._process_key(ch)
                     continue
 

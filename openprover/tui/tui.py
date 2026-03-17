@@ -65,6 +65,7 @@ class TUI(TextMixin, StreamMixin, NavMixin, TabsMixin, StepsMixin,
         # Thread safety for stdout
         self._write_lock = threading.Lock()
         self._key_process_lock = threading.Lock()
+        self._ctrl_c_cb = None  # Called directly from bg thread on ctrl+c
         # Frame buffer: when not None, _write_raw appends here instead of stdout
         self._buf: list[str] | None = None
         # Tabs

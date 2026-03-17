@@ -496,11 +496,12 @@ def _cmd_prove():
 
     signal.signal(signal.SIGTERM, handle_sigterm)
 
-    # Signal handling: ctrl+c interrupts the active LLM call
+    # ctrl+c handling: TUI calls directly from bg thread; SIGINT for headless
     def handle_sigint(signum, frame):
         prover.request_interrupt()
 
     signal.signal(signal.SIGINT, handle_sigint)
+    tui._ctrl_c_cb = prover.request_interrupt
 
     try:
         prover.run()

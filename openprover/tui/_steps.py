@@ -98,13 +98,17 @@ class StepsMixin:
                 s = plan.get("summary", "")
                 c = ACTION_STYLE.get(a, "")
                 if a == "spawn":
-                    # Use per-task summaries for spawn
+                    # Use per-task summaries for spawn, one per line
                     task_summaries = [
                         t.get("summary", "").strip()
                         for t in plan.get("tasks", [])
                         if t.get("summary", "").strip()
                     ]
-                    s = "; ".join(task_summaries) if task_summaries else s
+                    if task_summaries:
+                        lines_parts.append(f'{c}■{RESET} {BOLD}{a}{RESET}')
+                        for ts in task_summaries:
+                            lines_parts.append(f'  {DIM}•{RESET} {ts}')
+                        continue
                 lines_parts.append(f'{c}■{RESET} {BOLD}{a}{RESET} {DIM}—{RESET} {s}')
             line = "\n".join(lines_parts)
         else:

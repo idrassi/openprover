@@ -622,7 +622,7 @@ class Prover:
                 for t in primary_plan.get("tasks", [])
                 if t.get("summary", "").strip()
             ]
-            primary_summary = "; ".join(task_summaries) if task_summaries else primary_plan.get("summary", "")
+            primary_summary = "\n".join(task_summaries) if task_summaries else primary_plan.get("summary", "")
         else:
             primary_summary = primary_plan.get("summary", "")
         logger.info("Actions: %s", actions_summary)

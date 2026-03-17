@@ -178,7 +178,7 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         "# omit content to delete\n"
         f"{_TOML_CLOSE_TAG}\n\n"
         "Slugs can contain `/` for subdirectories, e.g. `\"attempts/induction-v1\"`, `\"lemmas/helper\"`.\n\n"
-        f"**spawn**: one or more `[[tasks]]` sections, each with `summary = \"...\"` (short label) and `description = {_TQ}...{_TQ}` (full task)\n"
+        f"**spawn**: one or more `[[tasks]]` sections, each with `summary = \"...\"` (clear, human-readable label explaining the worker's purpose — shown in the UI) and `description = {_TQ}...{_TQ}` (full task)\n"
         f"**write_whiteboard**: `whiteboard = {_TQ}...{_TQ}` (complete replacement of current whiteboard)\n"
     )
     if not isolation:
@@ -387,7 +387,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         f'action = "spawn"\n'
         "\n"
         "[[tasks]]\n"
-        'summary = "Short label for this worker"\n'
+        'summary = "Prove upper bound via angular order statistics"\n'
         f'description = {_TQ}\n'
         "Full task instructions here...\n"
         f'{_TQ}\n'

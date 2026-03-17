@@ -3,6 +3,7 @@
 import os
 import queue
 import select
+import signal
 import sys
 import time as _time
 
@@ -100,6 +101,11 @@ class InputMixin:
                         continue
 
                     ch = chr(b)
+                    # ctrl+c must be handled immediately regardless of state
+                    if ch == '\x03':
+                        self._process_key(ch)
+                        i += 1
+                        continue
                     if self._can_handle_directly():
                         if ch in ('r', 'i', 'w', '?', 'a'):
                             self._process_key(ch)
@@ -232,6 +238,9 @@ class InputMixin:
             elif self._active_tab.scroll_offset > 0:
                 self._active_tab.scroll_offset = 0
                 self._redraw()
+        elif ch == '\x03':
+            # ctrl+c: raise SIGINT so the CLI signal handler fires
+            os.kill(os.getpid(), signal.SIGINT)
         elif self.autonomous and ch == 's':
             self.pending_action = 'summarize'
 

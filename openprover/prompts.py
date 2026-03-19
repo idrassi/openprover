@@ -110,7 +110,11 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
         "so the whiteboard can just reference repo items with [[item-slug]] where applicable.\n"
     )
     if not isolation:
-        principles += "- Use literature_search sparingly (2-3 times max). Store results in the repo immediately.\n"
+        principles += (
+            "- Use literature_search sparingly (2-3 times max). Store results in the repo immediately.\n"
+            "- **Never delegate literature search to a worker via spawn.** Workers have no web access. "
+            "Use the `literature_search` action directly — it's a planner-level action.\n"
+        )
     if lean_items:
         principles += (
             "- Use write_items with format=\"lean\" to develop and test Lean code. "

@@ -111,7 +111,7 @@ def _tool_lean_verify(
         result = "OK — no errors"
     else:
         # Distinguish real errors from warnings-only
-        has_error = any(": error:" in line for line in feedback.splitlines())
+        has_error = any(": error" in line for line in feedback.splitlines())
         if has_error:
             status = "error"
         elif "sorry" in feedback.lower():
@@ -148,7 +148,7 @@ def _tool_lean_store(
     success, feedback, _cmd_info = run_lean_check(path, lean_project_dir)
 
     if not success:
-        has_error = any(": error:" in line for line in feedback.splitlines())
+        has_error = any(": error" in line for line in feedback.splitlines())
         if has_error:
             logger.info("[%s] lean_store: rejected (errors)", worker_id)
             return (feedback, "error")

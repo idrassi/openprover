@@ -629,7 +629,10 @@ class StepsMixin:
         if status == "running":
             status_badge = f"{YELLOW}● running…{RESET}"
         elif status == "ok":
-            status_badge = f"{GREEN}● succeeded{RESET}{dur_text}"
+            if tool == "lean_search":
+                status_badge = dur_text.strip() if dur_text else ""
+            else:
+                status_badge = f"{GREEN}● succeeded{RESET}{dur_text}"
         elif status == "partial":
             status_badge = f"{YELLOW}● partial (sorry){RESET}{dur_text}"
         else:

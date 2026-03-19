@@ -108,7 +108,7 @@ def _tool_lean_verify(
     success, feedback, _cmd_info = run_lean_check(path, lean_project_dir)
     if success:
         status = "ok"
-        result = "OK — no errors"
+        result = "OK"
     else:
         # Distinguish real errors from warnings-only
         has_error = any(": error" in line for line in feedback.splitlines())
@@ -120,9 +120,6 @@ def _tool_lean_verify(
             # Warnings only, no errors — treat as success
             status = "ok"
         result = feedback
-    if store:
-        store_lines = len(store.splitlines())
-        result = f"({store_lines} lines from lean_store were automatically prepended)\n{result}"
     logger.info("[%s] lean_verify: %s", worker_id, status)
     return (result, status)
 

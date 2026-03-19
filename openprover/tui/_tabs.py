@@ -203,7 +203,7 @@ class TabsMixin:
         status = entry.get("status", "")
         color = TOOL_STYLE.get(tool, WHITE)
         if status == "ok":
-            icon = f"{GREEN}\u2713{RESET}"
+            icon = "" if tool == "lean_search" else f"{GREEN}\u2713{RESET}"
         elif status == "partial":
             icon = f"{YELLOW}\u25cf{RESET}"
         elif status == "running":

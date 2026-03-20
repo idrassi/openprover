@@ -135,7 +135,9 @@ class RenderMixin:
                     continue
                 for tline in entry.text.splitlines():
                     text = f'  {DIM}{tline}{RESET}'
-                    for wrapped in self._wrap_visual_text(text, max_w):
+                    continuation = " " * self._leading_visible_spaces(text)
+                    for wrapped in self._wrap_visual_text(
+                            text, max_w, continuation_prefix=continuation):
                         lines.append(wrapped)
                 if not entry.text.splitlines():
                     text = f'  {DIM}{RESET}'
@@ -200,7 +202,9 @@ class RenderMixin:
                 joined = "".join(tab.trace_buf)
                 for tline in joined.splitlines():
                     text = f'  {DIM}{tline}{RESET}'
-                    for wrapped in self._wrap_visual_text(text, max_w):
+                    continuation = " " * self._leading_visible_spaces(text)
+                    for wrapped in self._wrap_visual_text(
+                            text, max_w, continuation_prefix=continuation):
                         lines.append(wrapped)
             if tab.output_buf:
                 joined = "".join(tab.output_buf)
@@ -221,7 +225,9 @@ class RenderMixin:
         max_w = max(self.cols - 2, 20)
         lines: list[str] = []
         for dline in self._step_detail_text.splitlines() or [""]:
-            lines.extend(self._wrap_visual_text(dline, max_w))
+            continuation = " " * self._leading_visible_spaces(dline)
+            lines.extend(self._wrap_visual_text(
+                dline, max_w, continuation_prefix=continuation))
         return lines
 
     def _input_avail_rows(self) -> int:
@@ -239,6 +245,7 @@ class RenderMixin:
         tab = self._active_tab
         sections: list[str] = []
         sep_w = max(self.cols - 4, 20)
+        max_w = max(self.cols - 2, 20)
 
         def add_input_section(title: str, lines: list[str], color: str = BLUE):
             if not lines:
@@ -248,7 +255,11 @@ class RenderMixin:
                 sections.append("")
             sections.append(f"  {color}{BOLD}{title}{RESET}")
             for line in lines:
-                sections.append(f"  {line}" if line else "")
+                text = f"  {line}" if line else ""
+                continuation = " " * self._leading_visible_spaces(text)
+                for wrapped in self._wrap_visual_text(
+                        text, max_w, continuation_prefix=continuation):
+                    sections.append(wrapped)
 
         summary_line = (tab.task_summary or "").strip()
         label_parts = [tab.label]

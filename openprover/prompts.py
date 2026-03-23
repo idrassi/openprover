@@ -1,4 +1,4 @@
-"""Prompt templates for OpenProver — planner/worker architecture."""
+"""Prompt templates for OpenProver - planner/worker architecture."""
 
 import re
 
@@ -76,11 +76,15 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
         "- You are the project leader. Delegate all mathematical work to workers - including problem analysis, exploring structure, checking special cases, and brainstorming strategies. Use parallel workers when possible.\n"
         "- Some problems require finding an answer before proving something about it (e.g. \"find all n such that...\").\n"
         "- Some problems are easy - that's OK. Don't overcomplicate things.\n"
+        "- **Stay constructive.** Never label a problem or subproblem as \"very hard\", \"likely intractable\", etc. on the whiteboard or in task descriptions. "
+        "Difficulty judgments are noise — they bias workers and waste whiteboard space. "
+        "Instead, focus on *what to try next*. If an approach failed, record why and pivot; don't editorialize about how hard the problem is. "
+        "Every competition problem has a solution; your job is to find it.\n"
         "- **Think first, then write task descriptions.** Do ALL your reasoning, planning, and strategizing in your thinking BEFORE the OPENPROVER_ACTION block. "
-        "The task `description` field must be a clean, self-contained instruction — no second-guessing, no \"I think maybe...\", no weighing alternatives, no stream-of-consciousness. "
+        "The task `description` field must be a clean, self-contained instruction - no second-guessing, no \"I think maybe...\", no weighing alternatives, no stream-of-consciousness. "
         "Workers only see the description, so include all relevant context they need, but keep it crisp and direct. "
-        "It's OK to be uncertain — just state it plainly (e.g. \"Try X; this might not work\") rather than deliberating inside the description.\n"
-        "- **Give workers minimal, sufficient input.** Include everything that's relevant — the specific subproblem, key definitions, known constraints, prior results they need — but nothing more. "
+        "It's OK to be uncertain - just state it plainly (e.g. \"Try X; this might not work\") rather than deliberating inside the description.\n"
+        "- **Give workers minimal, sufficient input.** Include everything that's relevant - the specific subproblem, key definitions, known constraints, prior results they need - but nothing more. "
         "Workers are capable mathematicians who can think for themselves. Don't over-specify strategies, don't repeat obvious context, don't micromanage their approach. "
         "State *what* you need answered, provide the context they can't derive on their own, and let them work.\n"
         "- Balance exploration and direct proof attempts.\n"
@@ -88,7 +92,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
         "- **One focused task per worker.** Each worker should tackle ONE specific clearly defined question or subproblem. "
         "When you need to explore several cases or approaches (e.g. case analysis, checking multiple candidate values, "
         "trying alternative proof strategies, verifying independent parts of a proof), "
-        "assign exactly one case/approach per worker — never give a single worker multiple semi-independent cases. "
+        "assign exactly one case/approach per worker - never give a single worker multiple semi-independent cases. "
         "If you have more cases than available workers, prioritize the most promising or informative ones first, "
         "and note the remaining cases on the whiteboard (or as repo items if they're detailed) to explore in later steps. "
         "Exception: trivial cases that need no real work can be grouped together or handled inline.\n"
@@ -98,16 +102,16 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
         "Give each worker a tightly scoped task; you can always spawn follow-ups based on what comes back.\n"
         "- **Don't stop at partial results.** If the problem has multiple levels of difficulty "
         "(e.g. \"find exact x, or at least an approximation\", \"prove P, or at least show Q\"), "
-        "or if you solve a relaxation/special case before the full problem — save that result to the repo via write_items, "
+        "or if you solve a relaxation/special case before the full problem - save that result to the repo via write_items, "
         "reference it from the whiteboard with [[slug]], and keep working toward the full solution. "
         "A partial result is progress, not the finish line.\n"
         "- Don't get stuck. If the first proof avenue does not work, try others.\n"
         "- **Keep the whiteboard up-to-date.** Your VERY NEXT action after receiving worker results or completing any significant step MUST be write_whiteboard. "
         "Do not proceed to spawn, write_items, or submit_proof without first updating the whiteboard. "
-        "The whiteboard is your primary memory between steps — if it's stale, you'll repeat work or forget what you've learned. "
+        "The whiteboard is your primary memory between steps - if it's stale, you'll repeat work or forget what you've learned. "
         "Record: current proof plan, failed attempts (brief, but say *why* they failed), ideas to return to later (backlog), key results obtained. "
-        "**Include substance, not just status.** Don't write 'Proof found' — write the 1-2 sentence proof idea. "
-        "Don't write 'Worker failed' — write what was tried and why it didn't work. "
+        "**Include substance, not just status.** Don't write 'Proof found' - write the 1-2 sentence proof idea. "
+        "Don't write 'Worker failed' - write what was tried and why it didn't work. "
         "The whiteboard should let someone reconstruct your key insights and dead ends at a glance. "
         "Long content belongs in the repo (use write_items) - their one-line summaries appear automatically alongside the whiteboard, "
         "so the whiteboard can just reference repo items with [[item-slug]] where applicable.\n"
@@ -115,7 +119,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
     if not isolation:
         principles += (
             "- Use literature_search sparingly (2-3 times max). Store results in the repo immediately.\n"
-            "- **Never spawn workers for literature search or recall.** Workers have no web access and no knowledge of specific theorems or papers — "
+            "- **Never spawn workers for literature search or recall.** Workers have no web access and no knowledge of specific theorems or papers - "
             "they will hallucinate citations. To find existing results, use the `literature_search` action (a planner-level action that spawns a web-enabled worker). "
             "Only spawn regular workers for doing original mathematical reasoning.\n"
         )
@@ -131,9 +135,9 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
     )
     _lean_no_cheat = (
         "- **NEVER trivialize the answer.** When the theorem has a `_solution` abbrev (e.g. "
-        "`putnam_XXXX_solution := sorry`), you MUST fill it with the actual mathematical answer — "
+        "`putnam_XXXX_solution := sorry`), you MUST fill it with the actual mathematical answer - "
         "the concrete characterization of the solution set (e.g. `{f | f = 0 ∨ ∃ a c, ...}`). "
-        "NEVER define the solution set by inlining or mirroring the problem's own predicate/condition — "
+        "NEVER define the solution set by inlining or mirroring the problem's own predicate/condition - "
         "that makes the proof trivially circular and produces a useless result. "
         "The point is to prove that your explicit answer IS the solution, not to restate the question as the answer. "
         "A proof that compiles but encodes no mathematical content is a failure.\n"
@@ -144,18 +148,18 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
             "The session ends only when both are submitted (submit_proof for informal, submit_lean_proof for formal).\n"
             "- After you have a proof in English, use read_theorem to see the formal theorem statement in Lean.\n"
             "- Before submitting, run at least one independent verification worker that checks the full informal proof end-to-end.\n"
-            "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
+            "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" - "
             "this must be a standalone .lean file with imports, and is auto-verified on write. "
-            "Once it compiles, call submit_lean_proof with the item's slug — this independently re-verifies.\n"
+            "Once it compiles, call submit_lean_proof with the item's slug - this independently re-verifies.\n"
             f"{_lean_no_cheat}"
         )
     elif lean_mode == "formalize_only":
         principles += (
             "- An informal proof (PROOF.md) is already provided. Your only goal is to produce PROOF.lean.\n"
             "- Use read_theorem to view the informal proof and Lean theorem statement.\n"
-            "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
+            "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" - "
             "this must be a standalone .lean file with imports, and is auto-verified on write. "
-            "Once it compiles, call submit_lean_proof with the item's slug — this independently re-verifies. "
+            "Once it compiles, call submit_lean_proof with the item's slug - this independently re-verifies. "
             "The session ends when verification succeeds.\n"
             f"{_lean_no_cheat}"
         )
@@ -200,14 +204,14 @@ def _build_toml_fields(*, lean_mode: str, has_lean: bool,
         "# omit content to delete\n"
         f"{_TOML_CLOSE_TAG}\n\n"
         "Slugs can contain `/` for subdirectories, e.g. `\"attempts/induction-v1\"`, `\"lemmas/helper\"`.\n\n"
-        f"**spawn**: one or more `[[tasks]]` sections, each with `summary = \"...\"` (clear, human-readable label explaining the worker's purpose — shown in the UI) and `description = {_TQ}...{_TQ}` (full task)\n"
+        f"**spawn**: one or more `[[tasks]]` sections, each with `summary = \"...\"` (clear, human-readable label explaining the worker's purpose - shown in the UI) and `description = {_TQ}...{_TQ}` (full task)\n"
         f"**write_whiteboard**: `whiteboard = {_TQ}...{_TQ}` (complete replacement of current whiteboard)\n"
     )
     if not isolation:
         fields += f'**literature_search**: `search_query = "..."` and `search_context = {_TQ}...{_TQ}`\n'
     if lean_items:
         fields += (
-            f"\n**write_items** (lean format — auto-verified): add `format = \"lean\"` to the item. "
+            f"\n**write_items** (lean format - auto-verified): add `format = \"lean\"` to the item. "
             f"Content must be a **complete, standalone Lean file** (with `import Mathlib` and all needed imports). "
             f"Include natural language descriptions as `--` comments. The first comment line is the summary.\n"
             f"{_TOML_OPEN_TAG}\n"
@@ -302,10 +306,10 @@ def _build_submit_proof_section(*, lean_mode: str, has_lean: bool) -> str:
         section += (
             "## submit_proof\n"
             "\n"
-            "submit_proof references a repo item slug — write the proof as a repo item first, "
+            "submit_proof references a repo item slug - write the proof as a repo item first, "
             "then submit when finalized. "
             "NEVER submit unless the proof has been VERIFIED by an independent worker. "
-            "submit_proof **terminates the session** — there is no going back.\n"
+            "submit_proof **terminates the session** - there is no going back.\n"
         )
     return section
 
@@ -345,7 +349,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         "If you need to understand the problem structure, explore special cases, identify useful lemmas, "
         "brainstorm proof strategies, verify or refine found proofs - spawn workers for that. "
         "Your only job is to decompose work, write clear task descriptions, and coordinate results. "
-        "In particular, never write Lean code yourself — workers have specialized Lean tools "
+        "In particular, never write Lean code yourself - workers have specialized Lean tools "
         "(lean_verify, lean_store, lean_search) that you don't have access to. "
         "Delegate all formalization work to workers.\n"
         "\n"
@@ -366,11 +370,11 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         "# Whiteboard Style\n"
         "\n"
         "Terse, dense, like shorthand on a real whiteboard:\n"
-        "- Sections: Goal, Plan (current proof strategy), Failed (past attempts — what & why), Backlog (ideas to revisit, with [[refs]] if applicable), Status, Open Questions\n"
+        "- Sections: Goal, Plan (current proof strategy), Failed (past attempts - what & why), Backlog (ideas to revisit, with [[refs]] if applicable), Status, Open Questions\n"
         "- Use LaTeX (will be displayed via MathJax): $inline$ and $$display$$\n"
         "- Abbreviations and arrows freely\n"
         '"WLOG assume $p,q$ coprime" not "Without loss of generality..."\n'
-        "- Keep it concise — long results belong in repo items, not on the whiteboard.\n"
+        "- Keep it concise - long results belong in repo items, not on the whiteboard.\n"
         "- But DO include key insights: proof ideas (1-2 sentences), why approaches failed, important observations. Status without substance is useless.\n"
         "\n"
         "---\n"
@@ -391,7 +395,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         f"Each block is wrapped in {_TOML_OPEN_TAG} ... {_TOML_CLOSE_TAG} tags and contains EXACTLY ONE action.\n"
         "\n"
         "**Rules:**\n"
-        "- Each block MUST have `action` and `summary` fields. Exception: `spawn` — the summary goes on each `[[tasks]]` entry instead.\n"
+        "- Each block MUST have `action` and `summary` fields. Exception: `spawn` - the summary goes on each `[[tasks]]` entry instead.\n"
         "- At most ONE `spawn` block per step (spawning is expensive).\n"
         "- Low-impact actions (write_whiteboard, read_items, read_theorem, write_items) can be combined freely with each other and with spawn.\n"
         "- Typical pattern: write_whiteboard + spawn, or write_whiteboard + write_items + spawn.\n"
@@ -477,7 +481,7 @@ def worker_system_prompt(*, lean_worker_tools: bool = False) -> str:
             "## Formalization Strategy\n"
             "\n"
             "When formalizing a proof in Lean, build it one small lemma at a time. "
-            "Never attempt large monolithic proofs — break them into small, "
+            "Never attempt large monolithic proofs - break them into small, "
             "independently verifiable pieces.\n"
             "\n"
             "1. First, formalize the basic structure with `sorry` placeholders for non-trivial steps.\n"
@@ -504,7 +508,7 @@ def verifier_system_prompt() -> str:
         "You will receive the original task and the worker's output. "
         "Your job is to independently verify the correctness of the worker's reasoning and conclusions.\n"
         "\n"
-        "IMPORTANT: Do NOT verify formal Lean code statements — those are checked automatically by the system. "
+        "IMPORTANT: Do NOT verify formal Lean code statements - those are checked automatically by the system. "
         "Focus on:\n"
         "- Informal mathematical reasoning and proofs\n"
         "- Logical gaps or unjustified steps\n"
@@ -513,8 +517,8 @@ def verifier_system_prompt() -> str:
         "\n"
         "End your response with exactly one of:\n"
         "VERDICT: CORRECT\n"
-        "VERDICT: CRITICALLY FLAWED — <brief reason>\n"
-        "VERDICT: NEEDS MINOR FIXES — <brief reason>\n"
+        "VERDICT: CRITICALLY FLAWED - <brief reason>\n"
+        "VERDICT: NEEDS MINOR FIXES - <brief reason>\n"
         "\n"
         "Be concise. Use $inline$ and $$display$$ LaTeX.\n"
     )
@@ -527,7 +531,7 @@ def format_verifier_prompt(task_description: str, worker_output: str) -> str:
         f"# Worker Output\n\n{worker_output}\n\n"
         f"# Your Task\n\n"
         f"Independently verify the worker's output above. "
-        f"Do not verify formal Lean code — focus on informal reasoning, "
+        f"Do not verify formal Lean code - focus on informal reasoning, "
         f"logical correctness, and whether the task was completed as requested."
     )
 
@@ -600,7 +604,7 @@ def format_planner_prompt(
             if action:
                 header += f": {action}"
             if summary:
-                header += f" — {summary}"
+                header += f" - {summary}"
             parts.append(f"\n\n## {header}")
 
             planner = entry.get("planner", "")
@@ -695,20 +699,20 @@ Produce a proof of this theorem:
 
 
 def discussion_system_prompt() -> str:
-    """System prompt for the discussion call — user-facing, no planner actions."""
+    """System prompt for the discussion call - user-facing, no planner actions."""
     return (
         "You are a senior research mathematician writing a brief post-mortem "
         "discussion of a proof effort.\n"
         "\n"
-        "The reader is the person who posed the problem. Write for them — "
+        "The reader is the person who posed the problem. Write for them - "
         "explain results, insights, and gaps in plain mathematical language. "
         "Do NOT reference internal system actions (spawn, read_theorem, "
-        "write_items, etc.) — those were mechanisms used during the proof "
+        "write_items, etc.) - those were mechanisms used during the proof "
         "session and are not available to the reader. "
         "Recommendations should be about the mathematics, not about tooling.\n"
         "\n"
         "Use $ and $$ for LaTeX math. Reference repo items with [[slug]] "
-        "links — the reader will have access to the full repo."
+        "links - the reader will have access to the full repo."
     )
 
 
@@ -743,7 +747,7 @@ def format_discussion_prompt(
     parts.append(
         "\n\nWrite a brief discussion: result, approaches tried, key insights, "
         "open gaps, recommendations. Use $ and $$ for math. "
-        "Reference repo items with [[slug]] links — the reader will have access to the full repo."
+        "Reference repo items with [[slug]] links - the reader will have access to the full repo."
     )
     return "".join(parts)
 
@@ -763,7 +767,7 @@ def format_planner_retry(
     return (
         f"{original_prompt}\n\n"
         f"---\n\n"
-        f"**RETRY ({attempt}/2)** — Your previous response could not be parsed.\n\n"
+        f"**RETRY ({attempt}/2)** - Your previous response could not be parsed.\n\n"
         f"Error: {error}\n\n"
         f"Your previous output ended with:\n"
         f"```\n{excerpt}\n```\n\n"
@@ -886,7 +890,7 @@ def _parse_toml_minimal(text: str) -> dict | None:
             i += 1
             continue
 
-        # [[tasks]] or [[items]] — start a new table entry
+        # [[tasks]] or [[items]] - start a new table entry
         if line in ('[[tasks]]', '[[items]]'):
             table_name = line[2:-2]
             current_table = {}

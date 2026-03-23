@@ -85,7 +85,7 @@ def lean_verify(code: str) -> str:
     full_code = merge_lean_imports(_store, code) if _store else code
     path = work_dir.make_file("mcp_verify", full_code)
     success, feedback, _cmd_info = run_lean_check(path, project_dir)
-    result = "OK — no errors" if success else feedback
+    result = "OK - no errors" if success else feedback
     if _store:
         store_lines = len(_store.splitlines())
         result = f"({store_lines} lines from lean_store were automatically prepended)\n{result}"
@@ -110,7 +110,7 @@ def lean_store(code: str) -> str:
             return f"Store rejected: code contains sorry\n{feedback}"
         # Non-sorry warnings are acceptable
     _store = candidate
-    return f"OK — stored.\n\nCurrent store:\n```lean\n{candidate}\n```"
+    return f"OK - stored.\n\nCurrent store:\n```lean\n{candidate}\n```"
 
 
 @mcp.tool()

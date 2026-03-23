@@ -102,7 +102,7 @@ class HFClient:
         self._interrupted.set()
 
     def cleanup(self):
-        """No-op — HTTP clients have no subprocesses to kill."""
+        """No-op - HTTP clients have no subprocesses to kill."""
         pass
 
     def clear_interrupt(self):
@@ -387,7 +387,7 @@ class HFClient:
         thinking_text = "".join(thinking_parts)
         result_text = "".join(output_parts)
         if not result_text and thinking_text:
-            # No </think> found — treat everything as output
+            # No </think> found - treat everything as output
             result_text = thinking_text
             thinking_text = ""
 

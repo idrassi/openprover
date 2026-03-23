@@ -1,4 +1,4 @@
-"""Terminal UI for OpenProver — ANSI scroll regions, fixed header, tabs."""
+"""Terminal UI for OpenProver - ANSI scroll regions, fixed header, tabs."""
 
 import atexit
 import queue
@@ -175,7 +175,7 @@ class TUI(TextMixin, StreamMixin, NavMixin, TabsMixin, StepsMixin,
             sys.stdout.flush()
 
     def _write_raw(self, data: str):
-        """Write without lock — caller must hold _write_lock."""
+        """Write without lock - caller must hold _write_lock."""
         if self._buf is not None:
             self._buf.append(data)
         else:

@@ -45,9 +45,9 @@ inspect.py      Read-only run browser
 Entry point. Parses arguments, creates a `Prover` and `TUI`, installs signal handlers, runs the prover, prints cost summary on exit.
 
 Subcommands:
-- `openprover <theorem>` -- main proving loop
-- `openprover inspect [run_dir]` -- browse a historical run
-- `openprover fetch-lean-data` -- download Lean Explore search data and models
+- `openprover <theorem>` - main proving loop
+- `openprover inspect [run_dir]` - browse a historical run
+- `openprover fetch-lean-data` - download Lean Explore search data and models
 
 The LLM client is constructed via a factory pattern: `Prover` calls `make_llm(archive_dir)` after setting up the work directory, so the archive path is correct from the start. Separate planner and worker models are supported via `--planner-model` and `--worker-model`.
 
@@ -194,7 +194,7 @@ ACTIONS = ["submit_proof", "give_up", "read_items", "write_items",
 
 ### `lean/core.py`
 
-Lean 4 integration -- all formal verification logic isolated here.
+Lean 4 integration - all formal verification logic isolated here.
 
 **`LeanTheorem`**: Parses a THEOREM.lean file.
 - Extracts preamble (import/open lines at top), locates all `sorry` positions via `\bsorry\b` regex
@@ -208,7 +208,7 @@ Lean 4 integration -- all formal verification logic isolated here.
 
 MCP server exposing `lean_verify` and `lean_search` tools for Claude CLI workers. Runs as a subprocess spawned by Claude CLI via `--mcp-config`. Communicates over stdio using JSON-RPC (MCP protocol).
 
-- **`lean_verify(code)`**: Writes code to a temp file in the Lean work directory, runs `run_lean_check()`, returns "OK -- no errors" or compiler output.
+- **`lean_verify(code)`**: Writes code to a temp file in the Lean work directory, runs `run_lean_check()`, returns "OK - no errors" or compiler output.
 - **`lean_search(query)`**: Searches Lean 4 declarations using LeanExplore. Returns matching names, signatures, and docstrings.
 
 Environment variables `LEAN_PROJECT_DIR` and `LEAN_WORK_DIR` are set by the prover when spawning the MCP server.

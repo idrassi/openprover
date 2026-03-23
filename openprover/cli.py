@@ -135,12 +135,12 @@ def _resolve_inputs(parser, args):
         lean_theorem_text = (run_dir / "THEOREM.lean").read_text() if has_lean_theorem_file else ""
         proof_md_text = (run_dir / "PROOF.md").read_text() if has_proof_file else ""
     else:
-        # Fresh start — resolve each input, checking for conflicts
+        # Fresh start - resolve each input, checking for conflicts
 
         # Theorem
         if args.theorem and has_theorem_file:
             parser.error(
-                f"both --theorem and {run_dir}/THEOREM.md exist — "
+                f"both --theorem and {run_dir}/THEOREM.md exist - "
                 "remove one to resolve the conflict"
             )
         if args.theorem:
@@ -152,14 +152,14 @@ def _resolve_inputs(parser, args):
             theorem_text = (run_dir / "THEOREM.md").read_text()
         else:
             parser.error(
-                "theorem is required — use --theorem or provide a run dir "
+                "theorem is required - use --theorem or provide a run dir "
                 "containing THEOREM.md"
             )
 
         # Lean theorem
         if args.lean_theorem and has_lean_theorem_file:
             parser.error(
-                f"both --lean-theorem and {run_dir}/THEOREM.lean exist — "
+                f"both --lean-theorem and {run_dir}/THEOREM.lean exist - "
                 "remove one to resolve the conflict"
             )
         if args.lean_theorem:
@@ -174,7 +174,7 @@ def _resolve_inputs(parser, args):
         # Proof
         if args.proof and has_proof_file:
             parser.error(
-                f"both --proof and {run_dir}/PROOF.md exist — "
+                f"both --proof and {run_dir}/PROOF.md exist - "
                 "remove one to resolve the conflict"
             )
         if args.proof:
@@ -359,7 +359,7 @@ def _cmd_prove():
     planner_model = args.planner_model or args.model
     worker_model = args.worker_model or args.model
 
-    # HF-backed models have no web search capability — force isolation
+    # HF-backed models have no web search capability - force isolation
     hf_models = {"minimax-m2.5"}
     if planner_model in hf_models and not args.isolation:
         args.isolation = True
@@ -419,7 +419,7 @@ def _cmd_prove():
     elif args.max_time is not None:
         budget_mode, budget_limit = "time", parse_duration(args.max_time)
     elif hasattr(args, '_saved_budget_mode'):
-        # Resumed without explicit budget flags — use saved config
+        # Resumed without explicit budget flags - use saved config
         budget_mode = args._saved_budget_mode
         budget_limit = args._saved_budget_limit
     else:

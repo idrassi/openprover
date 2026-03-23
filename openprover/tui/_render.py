@@ -30,7 +30,7 @@ class RenderMixin:
         row1 += f' {BLUE}{"─" * fill1}╮{RESET}'
         self._write_raw(f'\033[1;1H{self._pad_to_width(row1, w)}')
 
-        # Row 2 — theorem
+        # Row 2 - theorem
         name = (self.theorem_name or "").replace("\n", " ").replace("\r", "")
         # Build inner content (between │ borders), then pad to exact width
         inner = f' {WHITE}{name}{RESET}'
@@ -43,7 +43,7 @@ class RenderMixin:
         row2 = f'{BLUE}│{RESET}{self._pad_to_width(inner, inner_w)}{BLUE}│{RESET}'
         self._write_raw(f'\033[2;1H{self._pad_to_width(row2, w)}')
 
-        # Row 3 — hints
+        # Row 3 - hints
         help_style = BOLD if self.view == "help" else DIM
         auto_style = BOLD if self.autonomous else DIM
         trace_style = BOLD if self.trace_visible else DIM
@@ -69,7 +69,7 @@ class RenderMixin:
         row3 = f'{BLUE}│{RESET}{" " * hints_pad}{hints_inner}{BLUE}│{RESET}'
         self._write_raw(f'\033[3;1H{self._pad_to_width(row3, w)}')
 
-        # Row 4 — bottom border + run dir + tab bar
+        # Row 4 - bottom border + run dir + tab bar
         run_dir = getattr(self, 'work_dir', '') or ''
         tab_parts = []
         for i, tab in enumerate(self.tabs):
@@ -196,7 +196,7 @@ class RenderMixin:
                         lines.append(f' {GREEN}▎{RESET}{wrapped}')
                 else:
                     lines.extend(wrapped_lines)
-        # Active streaming content (not yet baked) — render in interleaved order
+        # Active streaming content (not yet baked) - render in interleaved order
         if tab.streaming:
             for seg_kind, seg_chunks in tab.stream_segments:
                 joined = "".join(seg_chunks)
@@ -268,7 +268,7 @@ class RenderMixin:
         summary_line = (tab.task_summary or "").strip()
         label_parts = [tab.label]
         if summary_line:
-            label_parts.append(f"{DIM}— {summary_line}{RESET}")
+            label_parts.append(f"{DIM}-- {summary_line}{RESET}")
         add_input_section("Worker", label_parts, color=MAGENTA)
 
         is_verifier = bool(tab.worker_task or tab.worker_output)

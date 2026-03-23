@@ -116,7 +116,7 @@ def _tool_lean_verify(
         elif "sorry" in feedback.lower():
             status = "partial"
         else:
-            # Warnings only, no errors — treat as success
+            # Warnings only, no errors - treat as success
             status = "ok"
         result = feedback
     logger.info("[%s] lean_verify: %s", worker_id, status)
@@ -147,7 +147,7 @@ def _tool_lean_store(
         if lean_has_errors(feedback):
             logger.info("[%s] lean_store: rejected (errors)", worker_id)
             return (feedback, "error")
-        # Warnings only — check for sorry
+        # Warnings only - check for sorry
         if "sorry" in feedback.lower():
             logger.info("[%s] lean_store: rejected (sorry)", worker_id)
             return (f"Store rejected: code contains sorry\n{feedback}", "error")
@@ -155,7 +155,7 @@ def _tool_lean_store(
 
     _worker_stores[worker_id] = candidate
     logger.info("[%s] lean_store: ok (%d chars)", worker_id, len(candidate))
-    return (f"OK — stored.\n\nCurrent store:\n```lean\n{candidate}\n```", "ok")
+    return (f"OK - stored.\n\nCurrent store:\n```lean\n{candidate}\n```", "ok")
 
 
 def _tool_lean_search(

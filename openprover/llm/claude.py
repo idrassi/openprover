@@ -81,7 +81,7 @@ class LLMClient:
         archive_path: Path | None = None,
         tool_callback=None,
         tool_start_callback=None,
-        max_tokens: int | None = None,  # ignored — CLI uses max_output_tokens from __init__
+        max_tokens: int | None = None,  # ignored - CLI uses max_output_tokens from __init__
     ) -> dict:
         """Make an LLM call and archive it.
 
@@ -187,7 +187,7 @@ class LLMClient:
         # Check for structured output failures
         subtype = raw.get("subtype", "")
         if "error" in subtype:
-            # Token limit exceeded — return partial content with "length" finish
+            # Token limit exceeded - return partial content with "length" finish
             err = raw.get("result", "") or subtype
             if "exceeded" in err and "token" in err:
                 result_text = raw.get("result", "")
@@ -265,7 +265,7 @@ class LLMClient:
         _cur_tool_name = ""
         _cur_tool_input_parts: list[str] = []
         _pending_tools: dict[str, dict] = {}  # tool_use_id -> {name, input}
-        # Use readline() instead of iterator — the iterator uses an internal
+        # Use readline() instead of iterator - the iterator uses an internal
         # read-ahead buffer that defeats real-time streaming.
         try:
             while True:
@@ -437,7 +437,7 @@ class LLMClient:
         subtype = result_data.get("subtype", "")
         if result_data.get("is_error") or "error" in subtype:
             err = result_data.get("result", "") or subtype or "streaming error"
-            # Token limit exceeded — return partial streamed content instead of crashing
+            # Token limit exceeded - return partial streamed content instead of crashing
             if "exceeded" in err and "token" in err and result_parts:
                 partial_text = "".join(result_parts)
                 thinking_text = "".join(thinking_parts)

@@ -168,7 +168,7 @@ def _make_pages(data: dict, step: int | str, role: str, label: str) -> list[dict
     elif result:
         out_segments.append(("normal", result))
     elif response is None and not error:
-        out_segments.append(("dim", "(in progress — waiting for LLM response)"))
+        out_segments.append(("dim", "(in progress - waiting for LLM response)"))
     else:
         out_segments.append(("dim", "(no output)"))
 

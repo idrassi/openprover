@@ -1,4 +1,4 @@
-"""Lean Explore data management — fetch and check local search data."""
+"""Lean Explore data management - fetch and check local search data."""
 
 import subprocess
 import sys
@@ -113,7 +113,7 @@ def fetch_lean_data() -> bool:
     try:
         import torch
         if torch.cuda.is_available():
-            print("GPU detected — pre-downloading reranker model (Qwen3-Reranker-0.6B)...")
+            print("GPU detected - pre-downloading reranker model (Qwen3-Reranker-0.6B)...")
             from transformers import AutoModelForCausalLM, AutoTokenizer
             AutoTokenizer.from_pretrained("Qwen/Qwen3-Reranker-0.6B")
             AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-Reranker-0.6B")

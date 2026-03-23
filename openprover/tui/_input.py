@@ -81,7 +81,7 @@ class InputMixin:
                                     self._key_queue.put(seq)
                                 i += 4
                                 continue
-                            # Arrow keys — handle directly during streaming
+                            # Arrow keys - handle directly during streaming
                             arrow = chr(data[i + 2])
                             seq = chr(0x1b) + '[' + arrow
                             if self._can_handle_directly() and arrow in ('A', 'B', 'C', 'D'):
@@ -169,15 +169,15 @@ class InputMixin:
         elif ch == 'a':
             self.autonomous = not self.autonomous
             self._redraw()
-        elif ch == '\x1b[C':  # right arrow — next tab
+        elif ch == '\x1b[C':  # right arrow - next tab
             self._switch_tab(1)
-        elif ch == '\x1b[D':  # left arrow — prev tab
+        elif ch == '\x1b[D':  # left arrow - prev tab
             self._switch_tab(-1)
         elif ch == '\x1b[5~':
             self._scroll_up()
         elif ch == '\x1b[6~':
             self._scroll_down()
-        elif ch == '\x1b[A':  # up arrow — navigate entries
+        elif ch == '\x1b[A':  # up arrow - navigate entries
             if self._main_visible:
                 tab = self._active_tab
                 if tab.id == "planner" and self.step_entries:
@@ -190,7 +190,7 @@ class InputMixin:
                     self._scroll_lines_up()
             else:
                 self._scroll_lines_up()
-        elif ch == '\x1b[B':  # down arrow — navigate entries
+        elif ch == '\x1b[B':  # down arrow - navigate entries
             if self._main_visible:
                 tab = self._active_tab
                 if tab.id == "planner" and self.step_entries:

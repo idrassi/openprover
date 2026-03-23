@@ -51,7 +51,7 @@ class NavMixin:
                     self._nav_proposal = True
                     self._scroll_selection_into_view()
                 else:
-                    # No proposal — scroll to bottom
+                    # No proposal - scroll to bottom
                     self._active_tab.scroll_offset = 0
         elif self._nav_proposal:
             # Proposal → back to accept/feedback, scroll to bottom
@@ -151,10 +151,10 @@ class NavMixin:
         target_start, target_end = sel
 
         if target_end >= end:
-            # Selection is below viewport — scroll so target_end is at bottom
+            # Selection is below viewport - scroll so target_end is at bottom
             tab.scroll_offset = max(total - target_end - 1, 0)
         elif target_start < start:
-            # Selection is above viewport — scroll so target_start is at top
+            # Selection is above viewport - scroll so target_start is at top
             new_end = min(total, target_start + visible)
             tab.scroll_offset = max(total - new_end, 0)
 

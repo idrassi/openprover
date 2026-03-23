@@ -1,4 +1,4 @@
-"""Lean 4 integration — parsing, assembly, verification, file management."""
+"""Lean 4 integration - parsing, assembly, verification, file management."""
 
 import logging
 import re
@@ -137,7 +137,7 @@ def run_lean_check(lean_file: Path, project_dir: Path,
         return (False, f"Lean verification timed out after {timeout}s", cmd_info)
     except FileNotFoundError:
         logger.error("lake command not found")
-        return (False, "lake command not found — is Lean/Lake installed and on PATH?", cmd_info)
+        return (False, "lake command not found - is Lean/Lake installed and on PATH?", cmd_info)
 
 
 def merge_lean_imports(existing: str, new_snippet: str) -> str:

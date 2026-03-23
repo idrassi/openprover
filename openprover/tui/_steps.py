@@ -29,7 +29,7 @@ class StepsMixin:
         action = plan.get("action", "")
         summary = plan.get("summary", "")
         color = ACTION_STYLE.get(action, "")
-        self._tab_log(planner, f'{color}▸{RESET} {BOLD}{action}{RESET} {DIM}—{RESET} {summary}')
+        self._tab_log(planner, f'{color}▸{RESET} {BOLD}{action}{RESET} {DIM}-{RESET} {summary}')
 
         # Show action-specific details
         if action == "spawn":
@@ -57,7 +57,7 @@ class StepsMixin:
                 ext = ".lean" if item.get("format") == "lean" else ".md"
                 if content:
                     first_line = content.strip().splitlines()[0] if content.strip() else ""
-                    self._tab_log(planner, f'  {DIM}•{RESET} {slug}{ext} {DIM}— {first_line}{RESET}')
+                    self._tab_log(planner, f'  {DIM}•{RESET} {slug}{ext} {DIM}-- {first_line}{RESET}')
                 else:
                     self._tab_log(planner, f'  {DIM}•{RESET} {slug}{ext} {DIM}(delete){RESET}')
 
@@ -109,11 +109,11 @@ class StepsMixin:
                         for ts in task_summaries:
                             lines_parts.append(f'  {DIM}•{RESET} {ts}')
                         continue
-                lines_parts.append(f'{c}■{RESET} {BOLD}{a}{RESET} {DIM}—{RESET} {s}')
+                lines_parts.append(f'{c}■{RESET} {BOLD}{a}{RESET} {DIM}-{RESET} {s}')
             line = "\n".join(lines_parts)
         else:
             color = ACTION_STYLE.get(action, "")
-            line = f'{color}■{RESET} {BOLD}{action}{RESET} {DIM}—{RESET} {summary}'
+            line = f'{color}■{RESET} {BOLD}{action}{RESET} {DIM}-{RESET} {summary}'
 
         # Show per-worker task summaries with verdicts for spawn actions
         if action == "spawn":
@@ -271,7 +271,7 @@ class StepsMixin:
         action_color = ACTION_STYLE.get(action, WHITE)
         count_label = f" ({len(proposals)} actions)" if len(proposals) > 1 else ""
         self._step_detail_title = (
-            f"Proposed{count_label}: {action_color}{action}{RESET} {DIM}—{RESET} {summary}"
+            f"Proposed{count_label}: {action_color}{action}{RESET} {DIM}-{RESET} {summary}"
             f"  {YELLOW}● proposed{RESET}"
         )
 
@@ -287,7 +287,7 @@ class StepsMixin:
             for line in lines:
                 parts.append(f"  {line}" if line else "")
 
-        # Planner Output — includes reasoning when trace_visible
+        # Planner Output - includes reasoning when trace_visible
         planner = self.tabs[0]
         trace = (planner.last_trace or "").rstrip()
         output = (planner.last_output or "").rstrip()
@@ -300,14 +300,14 @@ class StepsMixin:
                     planner_lines.append("")
             else:
                 tok = self._approx_token_label(trace)
-                planner_lines.append(f"{DIM}[reasoning — {tok}]{RESET}")
+                planner_lines.append(f"{DIM}[reasoning - {tok}]{RESET}")
                 if output:
                     planner_lines.append("")
         if output:
             for is_toml, segment in self._iter_toml_segments(output):
                 if is_toml and not self.trace_visible:
                     tok = self._approx_token_label(segment)
-                    planner_lines.append(f"{DIM}[action — {tok}]{RESET}")
+                    planner_lines.append(f"{DIM}[action - {tok}]{RESET}")
                     continue
                 for line in segment.splitlines():
                     planner_lines.append(
@@ -350,7 +350,7 @@ class StepsMixin:
                     ext = ".lean" if item.get("format") == "lean" else ".md"
                     if content:
                         first = content.strip().splitlines()[0] if content.strip() else ""
-                        detail_lines.append(f"• {slug}{ext} — {first}")
+                        detail_lines.append(f"• {slug}{ext} - {first}")
                     else:
                         detail_lines.append(f"• {slug}{ext} (delete)")
             elif plan_action == "read_items":
@@ -366,7 +366,7 @@ class StepsMixin:
             if detail_lines:
                 ac = ACTION_STYLE.get(plan_action, WHITE)
                 add_section(
-                    f"{section_prefix}{ac}{plan_action}{RESET} {DIM}—{RESET} {plan_summary}",
+                    f"{section_prefix}{ac}{plan_action}{RESET} {DIM}-{RESET} {plan_summary}",
                     detail_lines, color=CYAN,
                 )
 
@@ -455,7 +455,7 @@ class StepsMixin:
         else:
             self._step_detail_title = (
                 f"Step {entry.get('step_num', '?')}: "
-                f"{action_color}{action}{RESET} {DIM}—{RESET} {summary}"
+                f"{action_color}{action}{RESET} {DIM}-{RESET} {summary}"
                 f"  {status_badge}"
             )
 
@@ -471,7 +471,7 @@ class StepsMixin:
             for line in lines:
                 parts.append(f"  {line}" if line else "")
 
-        # Planner Output — includes reasoning when trace_visible
+        # Planner Output - includes reasoning when trace_visible
         trace = (entry.get("trace") or "").rstrip()
         output = (entry.get("output") or "").rstrip()
         planner_lines: list[str] = []
@@ -483,14 +483,14 @@ class StepsMixin:
                     planner_lines.append("")
             else:
                 tok = self._approx_token_label(trace)
-                planner_lines.append(f"{DIM}[reasoning — {tok}]{RESET}")
+                planner_lines.append(f"{DIM}[reasoning - {tok}]{RESET}")
                 if output:
                     planner_lines.append("")
         if output:
             for is_toml, segment in self._iter_toml_segments(output):
                 if is_toml and not self.trace_visible:
                     tok = self._approx_token_label(segment)
-                    planner_lines.append(f"{DIM}[action — {tok}]{RESET}")
+                    planner_lines.append(f"{DIM}[action - {tok}]{RESET}")
                     continue
                 for line in segment.splitlines():
                     planner_lines.append(
@@ -523,7 +523,7 @@ class StepsMixin:
                         ext = ".lean" if item.get("format") == "lean" else ".md"
                         if content:
                             first = content.strip().splitlines()[0] if content.strip() else ""
-                            detail_lines.append(f"• {slug}{ext} — {first}")
+                            detail_lines.append(f"• {slug}{ext} - {first}")
                         else:
                             detail_lines.append(f"• {slug}{ext} (delete)")
                 elif pa == "read_items":
@@ -532,7 +532,7 @@ class StepsMixin:
                         detail_lines.append(", ".join(slugs))
                 if detail_lines:
                     add_section(
-                        f"{pac}{pa}{RESET} {DIM}—{RESET} {ps}",
+                        f"{pac}{pa}{RESET} {DIM}-{RESET} {ps}",
                         detail_lines, color=CYAN,
                     )
         else:
@@ -557,7 +557,7 @@ class StepsMixin:
                     worker_lines = worker_output_by_idx.get(v_idx, [])
                     if worker_lines:
                         add_section(
-                            f"{label} — Worker {v_idx} Output",
+                            f"{label} - Worker {v_idx} Output",
                             worker_lines,
                             color=CYAN,
                         )

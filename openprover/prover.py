@@ -1,4 +1,4 @@
-"""Core proving loop for OpenProver — planner/worker architecture."""
+"""Core proving loop for OpenProver - planner/worker architecture."""
 
 import json
 import logging
@@ -235,7 +235,7 @@ class Prover:
             self.step_num = len(existing)
             self._load_step_history()
         else:
-            # Fresh run — write initial files
+            # Fresh run - write initial files
             (self.work_dir / "THEOREM.md").write_text(self.theorem_text)
             if self.lean_theorem_text:
                 (self.work_dir / "THEOREM.lean").write_text(self.lean_theorem_text)
@@ -252,7 +252,7 @@ class Prover:
         if self.resumed:
             logger.info("Resuming from step %d (%s)", self.step_num, self.budget.status_str())
 
-        # LLM clients (archive_dir unused — all calls provide explicit archive_path)
+        # LLM clients (archive_dir unused - all calls provide explicit archive_path)
         self.planner_llm = self._make_llm(self.work_dir)
         self.worker_llm = self._make_worker_llm(self.work_dir)
         # Unified view for cost/call tracking
@@ -295,11 +295,11 @@ class Prover:
                     self.lean_explore_service = Service(engine=engine)
                     logger.info("LeanExplore service initialized")
                 except ImportError:
-                    logger.warning("lean_explore not installed — lean_search tool disabled")
+                    logger.warning("lean_explore not installed - lean_search tool disabled")
                 except Exception as e:
                     logger.warning("LeanExplore init failed: %s", e)
             else:
-                logger.warning("lean_worker_tools enabled but worker is neither Claude nor vLLM — tools disabled")
+                logger.warning("lean_worker_tools enabled but worker is neither Claude nor vLLM - tools disabled")
 
         # Derive theorem name for header
         lines = self.theorem_text.strip().splitlines()
@@ -371,7 +371,7 @@ class Prover:
             if result == "stop":
                 break
             if self.budget.should_conclude():
-                self.tui.log("Budget threshold reached — concluding.", color="yellow")
+                self.tui.log("Budget threshold reached - concluding.", color="yellow")
                 break
 
         if not self.shutting_down and self.tui.step_entries:
@@ -486,7 +486,7 @@ class Prover:
         if n_done:
             self.tui.log(
                 f"Re-spawning {n_todo} interrupted worker(s) from step "
-                f"{self.step_num} ({n_done} already finished — skipping)",
+                f"{self.step_num} ({n_done} already finished - skipping)",
                 color="cyan",
             )
         else:
@@ -635,7 +635,7 @@ class Prover:
                 parse_error = plans.message
                 remaining = MAX_PARSE_RETRIES - attempt
                 self.tui.log(
-                    f"Invalid action: {parse_error} — "
+                    f"Invalid action: {parse_error} - "
                     f"{'retrying' if remaining else 'giving up'}...",
                     color="red",
                 )
@@ -645,11 +645,11 @@ class Prover:
                 continue
 
             if plans is None:
-                # Check if truncated — try Phase 2 forced output
+                # Check if truncated - try Phase 2 forced output
                 finish = resp.get("finish_reason", "")
                 if finish in ("length", "max_tokens") and attempt == 0:
-                    logger.info("Planner truncated (finish_reason=%s) — Phase 2", finish)
-                    self.tui.log("Planner output truncated — forcing decision...", color="yellow")
+                    logger.info("Planner truncated (finish_reason=%s) - Phase 2", finish)
+                    self.tui.log("Planner output truncated - forcing decision...", color="yellow")
                     phase2_prompt = prompts.format_planner_truncated(prompt, resp["result"])
                     self.tui.stream_start("forcing decision", tab="planner")
                     try:
@@ -688,7 +688,7 @@ class Prover:
                 )
                 remaining = MAX_PARSE_RETRIES - attempt
                 self.tui.log(
-                    f"Failed to parse planner output — "
+                    f"Failed to parse planner output - "
                     f"{'retrying' if remaining else 'giving up'}...",
                     color="red",
                 )
@@ -831,7 +831,7 @@ class Prover:
                 self.autonomous = True
                 self.tui.log("  autonomous mode", dim=True)
                 return None
-            # Feedback — set as prev_output and retry next step
+            # Feedback - set as prev_output and retry next step
             text = user_resp.strip()
             # Use the primary (last) plan for the rejection record
             primary = plans[-1]
@@ -839,7 +839,7 @@ class Prover:
             summary = primary.get("summary", "")
             detail = (
                 f"Proposed step:\n"
-                f"{action} — {summary}".strip(" —")
+                f"{action} - {summary}".strip(" --")
             )
             self.tui.step_complete(
                 self.step_num,
@@ -858,7 +858,7 @@ class Prover:
                 feedback=text,
             )
             self._push_output(f"Human feedback: {user_resp}")
-            self.tui.show_replan_notice("Feedback noted — will replan next step")
+            self.tui.show_replan_notice("Feedback noted - will replan next step")
             return "continue"
 
     def _handle_interrupt(self, step_dir: Path) -> str:
@@ -875,7 +875,7 @@ class Prover:
         if self.autonomous:
             self.autonomous = False
             self.tui.autonomous = False
-            self.tui.log("Interrupted — switching to manual mode", color="yellow")
+            self.tui.log("Interrupted - switching to manual mode", color="yellow")
         else:
             self.tui.log("Interrupted", color="yellow")
 
@@ -914,11 +914,11 @@ class Prover:
             })
             if len(self.step_history) > 3:
                 self.step_history = self.step_history[-3:]
-            self.tui.show_replan_notice("Feedback noted — will replan next step")
+            self.tui.show_replan_notice("Feedback noted - will replan next step")
             return "continue"
 
     def _handle_submit_proof(self, plan: dict, _step_dir: Path) -> str:
-        """Handle submit_proof — informal markdown proof only."""
+        """Handle submit_proof - informal markdown proof only."""
         proof_slug = plan.get("proof_slug", "")
 
         if not proof_slug:
@@ -946,7 +946,7 @@ class Prover:
         return self._check_completion(feedback)
 
     def _handle_submit_lean_proof(self, plan: dict, step_dir: Path) -> str:
-        """Handle submit_lean_proof — submit a lean repo item as the formal proof."""
+        """Handle submit_lean_proof - submit a lean repo item as the formal proof."""
         lean_proof_slug = plan.get("lean_proof_slug", "")
 
         if not lean_proof_slug:
@@ -1030,13 +1030,13 @@ class Prover:
         if not self.budget.allow_give_up():
             pct = int(self.budget.fraction_spent() * 100)
             self.tui.log(
-                f"Not giving up — only {pct}% of budget spent",
+                f"Not giving up - only {pct}% of budget spent",
                 color="yellow",
             )
             self._push_output("give_up rejected: too much budget remaining. Keep trying.")
             return "continue"
         logger.info("Giving up at step %d (budget %s)", self.step_num, self.budget.status_str())
-        self.tui.log("Stuck — no more ideas.", color="yellow")
+        self.tui.log("Stuck - no more ideas.", color="yellow")
         return "stop"
 
     def _handle_read_items(self, plan: dict):
@@ -1065,7 +1065,7 @@ class Prover:
             if fmt == "lean" and not self.lean_items:
                 self.tui.log(f"[[{slug}]]: lean items not enabled", color="red")
                 lean_feedback.append(
-                    f"[[{slug}]]: Rejected — lean items are not enabled. "
+                    f"[[{slug}]]: Rejected - lean items are not enabled. "
                     f"Use --lean-items to enable."
                 )
                 continue
@@ -1087,7 +1087,7 @@ class Prover:
                 # Distinguish real errors from warnings-only
                 if not success and feedback:
                     if not lean_has_errors(feedback) and "sorry" not in feedback.lower():
-                        # Warnings only, no errors — treat as success
+                        # Warnings only, no errors - treat as success
                         success = True
 
                 if success:
@@ -1106,11 +1106,11 @@ class Prover:
                         logger.info("Lean item [[%s]] verified OK", slug)
                         lean_feedback.append(f"[[{slug}]]: Lean verification PASSED")
                 else:
-                    self.tui.log(f"[[{slug}]] lean verification failed — not saved",
+                    self.tui.log(f"[[{slug}]] lean verification failed - not saved",
                                  color="yellow")
-                    logger.info("Lean item [[%s]] failed verification — not saved", slug)
+                    logger.info("Lean item [[%s]] failed verification - not saved", slug)
                     lean_feedback.append(
-                        f"[[{slug}]]: Lean verification FAILED — item was NOT saved "
+                        f"[[{slug}]]: Lean verification FAILED - item was NOT saved "
                         f"to the repo.\n```\n{feedback}\n```"
                     )
             elif not content:
@@ -1250,7 +1250,7 @@ class Prover:
             if self.autonomous:
                 self.autonomous = False
                 self.tui.autonomous = False
-                self.tui.log("Interrupted — switching to manual mode", color="yellow")
+                self.tui.log("Interrupted - switching to manual mode", color="yellow")
 
         # ── Verifier phase ──
         verifier_resps = self._run_verifiers(tasks, worker_resps, workers_dir)
@@ -1428,7 +1428,7 @@ class Prover:
             if self.autonomous:
                 self.autonomous = False
                 self.tui.autonomous = False
-                self.tui.log("Interrupted — switching to manual mode", color="yellow")
+                self.tui.log("Interrupted - switching to manual mode", color="yellow")
             result = "(terminated by user)"
             self._push_output(result)
             search_resp = {"result": result, "cost": 0.0, "duration_ms": 0,
@@ -1511,10 +1511,10 @@ class Prover:
             # Phase 2 if truncated or soft-interrupted
             if resp.get("finish_reason") in ("length", "max_tokens", "soft_interrupted"):
                 reason = resp["finish_reason"]
-                logger.info("[%s] %s — Phase 2", worker_id, reason)
+                logger.info("[%s] %s - Phase 2", worker_id, reason)
                 if reason == "soft_interrupted":
                     self.worker_llm.clear_soft_interrupt()
-                label = "interrupted — forcing output..." if reason == "soft_interrupted" else "forcing output..."
+                label = "interrupted - forcing output..." if reason == "soft_interrupted" else "forcing output..."
                 self.tui.stream_start(label, tab=worker_id)
                 answer_reserve = getattr(self.worker_llm, 'answer_reserve', 4096)
                 phase2_prompt = (
@@ -1640,7 +1640,7 @@ class Prover:
                     # Phase 2: force output, no tools
                     if finish == "soft_interrupted":
                         self.worker_llm.clear_soft_interrupt()
-                    logger.info("[%s] %s — Phase 2", worker_id, finish)
+                    logger.info("[%s] %s - Phase 2", worker_id, finish)
                     assistant_msg = {"role": "assistant", "content": resp["result"] or ""}
                     messages.append(assistant_msg)
                     messages.append({
@@ -1665,7 +1665,7 @@ class Prover:
                     total_duration += resp["duration_ms"]
                     break
 
-                # Unknown finish reason — treat as done
+                # Unknown finish reason - treat as done
                 break
 
             result = {
@@ -1956,7 +1956,7 @@ class Prover:
             return has_proof_md or has_discussion
 
     def inspect(self):
-        """Enter inspect mode — browse historical run data without running steps."""
+        """Enter inspect mode - browse historical run data without running steps."""
         self._setup_tui(autonomous=False)
         self._load_history()
 
@@ -1965,7 +1965,7 @@ class Prover:
             self.tui.log("Proof found!", color="green", bold=True)
         elif (self.work_dir / "DISCUSSION.md").exists():
             self.tui.log("Session ended.", dim=True)
-        self.tui.log("Inspect mode — press q to quit", dim=True)
+        self.tui.log("Inspect mode - press q to quit", dim=True)
 
         self.tui.browse()
 
@@ -2018,7 +2018,7 @@ class Prover:
             feedback = meta.get("feedback", "")
             detail = ""
             if status == "rejected":
-                detail = f"Proposed step:\n{action} — {summary}".strip(" —")
+                detail = f"Proposed step:\n{action} - {summary}".strip(" --")
                 self.tui.update_step_status(
                     step_idx,
                     rejected=True,
@@ -2139,8 +2139,8 @@ class Prover:
 
         if self._workers_active and self._interrupt_count == 1:
             # First Ctrl+C during workers: soft interrupt (force Phase 2 output)
-            logger.info("Soft interrupt — forcing worker output")
-            self.tui.log("Soft interrupt — forcing workers to wrap up", color="yellow")
+            logger.info("Soft interrupt - forcing worker output")
+            self.tui.log("Soft interrupt - forcing workers to wrap up", color="yellow")
             self.worker_llm.soft_interrupt()
             return
 

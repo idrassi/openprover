@@ -19,7 +19,8 @@ Modes:
 ## Requirements
 
 - Python 3.10+
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` command on PATH)
+- **Claude** (default): [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` command on PATH)
+- **Local models** (alternative): any OpenAI-compatible server such as [vLLM](https://github.com/vllm-project/vllm); pass `--provider-url` to point at it
 
 ## Install
 
@@ -104,7 +105,7 @@ openprover --theorem examples/addition.md \
 | `--provider-url` | `http://localhost:8000` | Server URL for local models |
 | `--answer-reserve` | `4096` | Tokens reserved for answer after thinking (local models) |
 
-Available models: `sonnet`, `opus`, `minimax-m2.5`
+Available Claude models: `sonnet`, `opus`. For local models, pass any model name supported by your OpenAI-compatible server (e.g. `minimax-m2.5`) together with `--provider-url`.
 
 ### TUI controls
 

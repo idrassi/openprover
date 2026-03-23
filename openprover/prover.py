@@ -177,13 +177,13 @@ class Prover:
                  resumed: bool = False,
                  make_worker_llm=None,
                  lean_items: bool = False,
-                 lean_worker_actions: bool = False,
+                 lean_worker_tools: bool = False,
                  history_budget: int = 0):
         self.model = model_name
         self._make_llm = make_llm
         self._make_worker_llm = make_worker_llm or make_llm
         self.lean_items = lean_items
-        self.lean_worker_actions = lean_worker_actions
+        self.lean_worker_tools = lean_worker_tools
         self._history_budget_override = history_budget
         self.budget = budget
         self.autonomous = autonomous
@@ -267,7 +267,7 @@ class Prover:
 
         # Tool calling for workers
         self.lean_explore_service = None
-        if self.lean_worker_actions:
+        if self.lean_worker_tools:
             if isinstance(self.worker_llm, LLMClient):
                 # Claude CLI: configure MCP server for tool calling
                 mcp_config = {
@@ -299,7 +299,7 @@ class Prover:
                 except Exception as e:
                     logger.warning("LeanExplore init failed: %s", e)
             else:
-                logger.warning("lean_worker_actions enabled but worker is neither Claude nor vLLM — tools disabled")
+                logger.warning("lean_worker_tools enabled but worker is neither Claude nor vLLM — tools disabled")
 
         # Derive theorem name for header
         lines = self.theorem_text.strip().splitlines()
@@ -1463,10 +1463,10 @@ class Prover:
         description = task.get("description", "")
         resolved_refs = self.repo.resolve_wikilinks(description)
         prompt = prompts.format_worker_prompt(description, resolved_refs)
-        use_vllm_tools = self.lean_worker_actions and getattr(self.worker_llm, 'vllm', False)
-        use_mcp_tools = self.lean_worker_actions and getattr(self.worker_llm, 'mcp_config', None)
+        use_vllm_tools = self.lean_worker_tools and getattr(self.worker_llm, 'vllm', False)
+        use_mcp_tools = self.lean_worker_tools and getattr(self.worker_llm, 'mcp_config', None)
         use_tools = use_vllm_tools or use_mcp_tools
-        system_prompt = prompts.worker_system_prompt(lean_worker_actions=use_tools)
+        system_prompt = prompts.worker_system_prompt(lean_worker_tools=use_tools)
 
         if use_vllm_tools:
             return self._run_worker_multi_turn(

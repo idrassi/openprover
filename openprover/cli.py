@@ -30,7 +30,7 @@ def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
                      parallelism: int, give_up_ratio: float,
                      isolation: bool, autonomous: bool, mode: str,
                      lean_project_dir: Path | None, lean_items: bool,
-                     lean_worker_actions: bool, provider_url: str,
+                     lean_worker_tools: bool, provider_url: str,
                      answer_reserve: int, history_budget: int):
     """Save run configuration so it can be restored on resume."""
     lines = [
@@ -47,7 +47,7 @@ def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
         f'mode = "{mode}"',
         f'lean_project_dir = "{lean_project_dir}"' if lean_project_dir else 'lean_project_dir = ""',
         f'lean_items = {str(lean_items).lower()}',
-        f'lean_worker_actions = {str(lean_worker_actions).lower()}',
+        f'lean_worker_tools = {str(lean_worker_tools).lower()}',
         f'provider_url = "{provider_url}"',
         f'answer_reserve = {answer_reserve}',
         f'history_budget = {history_budget}',
@@ -255,7 +255,7 @@ def _cmd_prove():
                         help="Path to existing PROOF.md (formalize-only mode, requires --lean-theorem)")
     parser.add_argument("--lean-items", action=argparse.BooleanOptionalAction, default=None,
                         help="Allow saving .lean items to the repo (auto-enabled with --lean-project)")
-    parser.add_argument("--lean-worker-actions", action=argparse.BooleanOptionalAction, default=None,
+    parser.add_argument("--lean-worker-tools", action=argparse.BooleanOptionalAction, default=None,
                         help="Enable worker tool calls (lean_verify, lean_search) via MCP/vLLM (auto-enabled with --lean-project + capable worker)")
     parser.add_argument("--repl-dir", type=Path, metavar="DIR",
                         help="Path to lean-repl directory (reserved for future use)")
@@ -327,8 +327,8 @@ def _cmd_prove():
                     args.lean_project = Path(lp)
             if not _cli_flag_given("--lean-items", "--no-lean-items"):
                 args.lean_items = saved.get("lean_items", args.lean_items)
-            if not _cli_flag_given("--lean-worker-actions", "--no-lean-worker-actions"):
-                args.lean_worker_actions = saved.get("lean_worker_actions", args.lean_worker_actions)
+            if not _cli_flag_given("--lean-worker-tools", "--no-lean-worker-tools"):
+                args.lean_worker_tools = saved.get("lean_worker_tools", args.lean_worker_tools)
             if not _cli_flag_given("--provider-url"):
                 args.provider_url = saved.get("provider_url", args.provider_url)
             if not _cli_flag_given("--answer-reserve"):
@@ -376,14 +376,14 @@ def _cmd_prove():
         _model_hint = planner_model if planner_model == worker_model else f"{planner_model}/{worker_model}"
         print(f"  {label} openprover ({_model_hint})…", end="", flush=True)
 
-    # Resolve --lean-worker-actions default
-    if args.lean_worker_actions is None:
-        args.lean_worker_actions = (args.lean_project is not None and worker_model in TOOL_CAPABLE_MODELS)
-    if args.lean_worker_actions:
+    # Resolve --lean-worker-tools default
+    if args.lean_worker_tools is None:
+        args.lean_worker_tools = (args.lean_project is not None and worker_model in TOOL_CAPABLE_MODELS)
+    if args.lean_worker_tools:
         if not args.lean_project:
-            parser.error("--lean-worker-actions requires --lean-project")
+            parser.error("--lean-worker-tools requires --lean-project")
         if worker_model not in TOOL_CAPABLE_MODELS:
-            parser.error("--lean-worker-actions requires a tool-capable worker model (sonnet, opus, or minimax-m2.5)")
+            parser.error("--lean-worker-tools requires a tool-capable worker model (sonnet, opus, or minimax-m2.5)")
         # Auto-fetch Lean Explore data if not available
         from .lean.data import is_lean_data_available, fetch_lean_data
         if not is_lean_data_available():
@@ -449,7 +449,7 @@ def _cmd_prove():
             mode=mode,
             lean_project_dir=args.lean_project,
             lean_items=args.lean_items,
-            lean_worker_actions=args.lean_worker_actions,
+            lean_worker_tools=args.lean_worker_tools,
             provider_url=args.provider_url,
             answer_reserve=args.answer_reserve,
             history_budget=args.history_budget,
@@ -473,7 +473,7 @@ def _cmd_prove():
         resumed=resuming and not inspect_mode,
         make_worker_llm=make_worker_llm,
         lean_items=args.lean_items,
-        lean_worker_actions=args.lean_worker_actions,
+        lean_worker_tools=args.lean_worker_tools,
         history_budget=args.history_budget,
     )
 

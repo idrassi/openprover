@@ -412,7 +412,7 @@ def planner_system_prompt(*, isolation: bool = False, allow_give_up: bool = True
         f"{toml_fields}"
     )
 
-def worker_system_prompt(*, lean_worker_actions: bool = False) -> str:
+def worker_system_prompt(*, lean_worker_tools: bool = False) -> str:
     """Build worker system prompt, optionally documenting tool actions."""
     base = (
         "You are a research mathematician working on a specific task.\n"
@@ -435,7 +435,7 @@ def worker_system_prompt(*, lean_worker_actions: bool = False) -> str:
         "IMPORTANT: You are a single worker. Do NOT attempt to spawn subagents, delegate to other workers, "
         "or \"launch agents in parallel\". You do all the work yourself, directly in your response.\n"
     )
-    if lean_worker_actions:
+    if lean_worker_tools:
         base += (
             "\n"
             "## Available Tools\n"

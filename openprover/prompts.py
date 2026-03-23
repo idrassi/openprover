@@ -129,6 +129,15 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
         "- Write proofs as repo items first (via write_items). This lets you refine, verify, and iterate "
         "on the proof before submitting. When ready, use submit_proof with the item's slug.\n"
     )
+    _lean_no_cheat = (
+        "- **NEVER trivialize the answer.** When the theorem has a `_solution` abbrev (e.g. "
+        "`putnam_XXXX_solution := sorry`), you MUST fill it with the actual mathematical answer — "
+        "the concrete characterization of the solution set (e.g. `{f | f = 0 ∨ ∃ a c, ...}`). "
+        "NEVER define the solution set by inlining or mirroring the problem's own predicate/condition — "
+        "that makes the proof trivially circular and produces a useless result. "
+        "The point is to prove that your explicit answer IS the solution, not to restate the question as the answer. "
+        "A proof that compiles but encodes no mathematical content is a failure.\n"
+    )
     if lean_mode == "prove_and_formalize":
         principles += (
             "- Both an informal proof and a formal Lean 4 proof are required. "
@@ -138,6 +147,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
             "- **Lean workflow**: Develop the complete Lean proof as a lean repo item via write_items with format=\"lean\" — "
             "this must be a standalone .lean file with imports, and is auto-verified on write. "
             "Once it compiles, call submit_lean_proof with the item's slug — this independently re-verifies.\n"
+            f"{_lean_no_cheat}"
         )
     elif lean_mode == "formalize_only":
         principles += (
@@ -147,6 +157,7 @@ def _build_principles(*, lean_mode: str, has_lean: bool,
             "this must be a standalone .lean file with imports, and is auto-verified on write. "
             "Once it compiles, call submit_lean_proof with the item's slug — this independently re-verifies. "
             "The session ends when verification succeeds.\n"
+            f"{_lean_no_cheat}"
         )
     elif lean_mode == "prove":
         principles += (
@@ -683,6 +694,24 @@ Produce a proof of this theorem:
     raise ValueError(f"Invalid mode: {mode}")
 
 
+def discussion_system_prompt() -> str:
+    """System prompt for the discussion call — user-facing, no planner actions."""
+    return (
+        "You are a senior research mathematician writing a brief post-mortem "
+        "discussion of a proof effort.\n"
+        "\n"
+        "The reader is the person who posed the problem. Write for them — "
+        "explain results, insights, and gaps in plain mathematical language. "
+        "Do NOT reference internal system actions (spawn, read_theorem, "
+        "write_items, etc.) — those were mechanisms used during the proof "
+        "session and are not available to the reader. "
+        "Recommendations should be about the mathematics, not about tooling.\n"
+        "\n"
+        "Use $ and $$ for LaTeX math. Reference repo items with [[slug]] "
+        "links — the reader will have access to the full repo."
+    )
+
+
 def format_discussion_prompt(
     theorem: str,
     whiteboard: str,
@@ -690,11 +719,22 @@ def format_discussion_prompt(
     steps_taken: int,
     budget_summary: str,
     proof: str = "",
+    has_proof_md: bool = False,
+    has_proof_lean: bool = False,
 ) -> str:
     parts = [
         f"# Theorem\n\n{theorem}",
         f"\n\n# Final Whiteboard\n\n{whiteboard}",
     ]
+    # Explicit submission status so the LLM knows what actually happened,
+    # regardless of whether the whiteboard was updated after submission.
+    status_lines = []
+    if has_proof_md:
+        status_lines.append("- Informal proof (PROOF.md): **submitted and accepted**")
+    if has_proof_lean:
+        status_lines.append("- Formal Lean proof (PROOF.lean): **submitted and verified**")
+    if status_lines:
+        parts.append("\n\n# Submission Status\n\n" + "\n".join(status_lines))
     if repo_index:
         parts.append(f"\n\n# Repository\n\n{repo_index}")
     if proof:

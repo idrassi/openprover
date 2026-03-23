@@ -1906,6 +1906,8 @@ class Prover:
 
     def _write_discussion(self):
         logger.info("Writing discussion")
+        has_proof_md = (self.work_dir / "PROOF.md").exists()
+        has_proof_lean = (self.work_dir / "PROOF.lean").exists()
         repo_index = self.repo.list_summaries()
         prompt = prompts.format_discussion_prompt(
             theorem=self.theorem_text,
@@ -1914,15 +1916,14 @@ class Prover:
             steps_taken=self.step_num,
             budget_summary=self.budget.summary_str(),
             proof=self.proof_text,
+            has_proof_md=has_proof_md,
+            has_proof_lean=has_proof_lean,
         )
         self.tui.stream_start("writing discussion", tab="planner")
         try:
             resp = self.planner_llm.call(
                 prompt=prompt,
-                system_prompt=prompts.planner_system_prompt(
-                    isolation=self.isolation, lean_mode=self.mode,
-                    lean_items=self.lean_items,
-                ),
+                system_prompt=prompts.discussion_system_prompt(),
                 label="discussion",
                 stream_callback=self._stream_cb("planner"),
                 archive_path=self.work_dir / "discussion_call.md",

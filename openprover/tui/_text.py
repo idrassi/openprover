@@ -77,6 +77,34 @@ class TextMixin:
         return parts
 
     @staticmethod
+    def _is_visually_blank(line: str) -> bool:
+        """Check if a rendered line contains only whitespace (ignoring ANSI)."""
+        i = 0
+        while i < len(line):
+            if line[i] == '\x1b':
+                m = re.match(r'\x1b\[[0-9;?]*[ -/]*[@-~]', line[i:])
+                if m:
+                    i += len(m.group(0))
+                    continue
+            if line[i] not in ' \t':
+                return False
+            i += 1
+        return True
+
+    @classmethod
+    def _collapse_blank_lines(cls, lines: list[str]) -> list[str]:
+        """Remove consecutive blank lines, keeping at most one."""
+        result: list[str] = []
+        prev_blank = False
+        for line in lines:
+            blank = cls._is_visually_blank(line)
+            if blank and prev_blank:
+                continue
+            result.append(line)
+            prev_blank = blank
+        return result
+
+    @staticmethod
     def _visible_len(text: str) -> int:
         """Count visible characters, ignoring ANSI escape sequences."""
         n = 0

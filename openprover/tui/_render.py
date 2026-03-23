@@ -223,7 +223,7 @@ class RenderMixin:
                             for wrapped in self._wrap_visual_text(
                                     text, max_w, continuation_prefix=continuation):
                                 lines.append(wrapped)
-        return lines
+        return self._collapse_blank_lines(lines)
 
     def _build_step_detail_lines(self) -> list[str]:
         max_w = max(self.cols - 2, 20)

@@ -315,9 +315,11 @@ class Prover:
     def _stream_cb(self, tab: str, output_only: bool = False):
         if not self.tui.supports_streaming:
             return None
-        if output_only:
-            return lambda t, k="text": self.tui.stream_text(t, kind=k, tab=tab) if k != "thinking" else None
-        return lambda t, k="text": self.tui.stream_text(t, kind=k, tab=tab)
+        def cb(t, k="text"):
+            if output_only and k == "thinking":
+                return
+            self.tui.stream_text(t, kind=k, tab=tab)
+        return cb
 
     def _setup_tui(self, *, autonomous: bool = False):
         """Initialize TUI with common state for both run() and inspect()."""

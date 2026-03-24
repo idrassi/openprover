@@ -10,7 +10,7 @@ from pathlib import Path
 
 from openprover import __version__
 from .budget import Budget, parse_duration
-from .llm import LLMClient, HFClient
+from .llm import LLMClient, HFClient, MistralClient
 from .prover import Prover, slugify
 from .tui import TUI, HeadlessTUI
 
@@ -224,7 +224,7 @@ def _cmd_prove():
         prog="openprover",
         description="Theorem prover powered by language models",
     )
-    model_choices = ["sonnet", "opus", "minimax-m2.5"]
+    model_choices = ["sonnet", "opus", "minimax-m2.5", "leanstral"]
     parser.add_argument("run_dir", nargs="?", help="Working directory (resumes if it contains an existing run)")
     parser.add_argument("--theorem", metavar="FILE", help="Path to theorem statement file (.md)")
     parser.add_argument("--model", default="sonnet", choices=model_choices, help="Model to use for both planner and worker (default: sonnet)")
@@ -282,13 +282,17 @@ def _cmd_prove():
     (work_dir, theorem_text, lean_theorem_text, proof_md_text,
      mode, resuming, read_only) = _resolve_inputs(parser, args)
 
-    # Map short model names to HuggingFace model IDs
+    # Map short model names to backend-specific model IDs
     HF_MODEL_MAP = {
         "minimax-m2.5": "MiniMaxAI/MiniMax-M2.5",
     }
+    MISTRAL_MODEL_MAP = {
+        "leanstral": "labs-leanstral-2603",
+    }
     VLLM_MODELS = {"minimax-m2.5"}  # served via vLLM (standard OpenAI API)
+    MISTRAL_MODELS = {"leanstral"}  # Mistral Conversations API
     CLAUDE_MODELS = {"sonnet", "opus"}
-    TOOL_CAPABLE_MODELS = VLLM_MODELS | CLAUDE_MODELS
+    TOOL_CAPABLE_MODELS = VLLM_MODELS | CLAUDE_MODELS | MISTRAL_MODELS
 
     # ── On resume, load saved config and apply as defaults ──
     if resuming:
@@ -379,9 +383,9 @@ def _cmd_prove():
         else:
             effective_effort = None
 
-    # HF-backed models have no web search capability - force isolation
-    hf_models = {"minimax-m2.5"}
-    if planner_model in hf_models and not args.isolation:
+    # Non-Claude models have no web search capability - force isolation
+    non_claude_models = {"minimax-m2.5", "leanstral"}
+    if planner_model in non_claude_models and not args.isolation:
         args.isolation = True
 
     if args.headless:
@@ -403,7 +407,7 @@ def _cmd_prove():
         if not args.lean_project:
             parser.error("--lean-worker-tools requires --lean-project")
         if worker_model not in TOOL_CAPABLE_MODELS:
-            parser.error("--lean-worker-tools requires a tool-capable worker model (sonnet, opus, or minimax-m2.5)")
+            parser.error("--lean-worker-tools requires a tool-capable worker model (sonnet, opus, minimax-m2.5, or leanstral)")
         # Auto-fetch Lean Explore data if not available
         from .lean.data import is_lean_data_available, fetch_lean_data
         if not is_lean_data_available():
@@ -413,6 +417,9 @@ def _cmd_prove():
                 print("Warning: lean_search will not be available")
 
     def _make_client(model_alias, archive_dir):
+        if model_alias in MISTRAL_MODEL_MAP:
+            return MistralClient(MISTRAL_MODEL_MAP[model_alias], archive_dir,
+                                 answer_reserve=args.answer_reserve)
         if model_alias in HF_MODEL_MAP:
             return HFClient(HF_MODEL_MAP[model_alias], archive_dir,
                             base_url=args.provider_url, answer_reserve=args.answer_reserve,
@@ -425,7 +432,7 @@ def _cmd_prove():
     def make_worker_llm(archive_dir):
         return _make_client(worker_model, archive_dir)
 
-    MODEL_DISPLAY = {"sonnet": "sonnet 4.6", "opus": "opus 4.6"}
+    MODEL_DISPLAY = {"sonnet": "sonnet 4.6", "opus": "opus 4.6", "leanstral": "leanstral"}
     _p = MODEL_DISPLAY.get(planner_model, planner_model)
     _w = MODEL_DISPLAY.get(worker_model, worker_model)
     model_label = _p if planner_model == worker_model else f"{_p}/{_w}"

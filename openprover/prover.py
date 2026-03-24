@@ -289,8 +289,8 @@ class Prover:
                 }
                 self.worker_llm.mcp_config = mcp_config
                 logger.info("Claude MCP tool calling configured")
-            elif getattr(self.worker_llm, 'vllm', False):
-                # vLLM: initialize LeanExplore for in-process tool execution
+            elif getattr(self.worker_llm, 'vllm', False) or getattr(self.worker_llm, 'mistral', False):
+                # vLLM / Mistral: initialize LeanExplore for in-process tool execution
                 try:
                     from lean_explore.search import SearchEngine, Service
                     engine = SearchEngine(use_local_data=False)
@@ -301,7 +301,7 @@ class Prover:
                 except Exception as e:
                     logger.warning("LeanExplore init failed: %s", e)
             else:
-                logger.warning("lean_worker_tools enabled but worker is neither Claude nor vLLM - tools disabled")
+                logger.warning("lean_worker_tools enabled but worker has no tool support - tools disabled")
 
         # Derive theorem name for header
         lines = self.theorem_text.strip().splitlines()
@@ -1466,11 +1466,12 @@ class Prover:
         resolved_refs = self.repo.resolve_wikilinks(description)
         prompt = prompts.format_worker_prompt(description, resolved_refs)
         use_vllm_tools = self.lean_worker_tools and getattr(self.worker_llm, 'vllm', False)
+        use_mistral_tools = self.lean_worker_tools and getattr(self.worker_llm, 'mistral', False)
         use_mcp_tools = self.lean_worker_tools and getattr(self.worker_llm, 'mcp_config', None)
-        use_tools = use_vllm_tools or use_mcp_tools
+        use_tools = use_vllm_tools or use_mistral_tools or use_mcp_tools
         system_prompt = prompts.worker_system_prompt(lean_worker_tools=use_tools)
 
-        if use_vllm_tools:
+        if use_vllm_tools or use_mistral_tools:
             return self._run_worker_multi_turn(
                 prompt, system_prompt, worker_id, archive_path,
             )

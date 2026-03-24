@@ -45,28 +45,18 @@ def print_tool_calls(tool_calls):
         print(f"  [{i}] {json.dumps(call, ensure_ascii=False)}")
 
 
-def merge_stream_tool_calls(aggregated, delta_tool_calls):
-    if not isinstance(delta_tool_calls, list):
-        return
-    for call in delta_tool_calls:
-        if not isinstance(call, dict):
-            continue
-        idx = call.get("index", 0)
-        entry = aggregated.setdefault(
-            idx,
-            {"id": "", "type": "", "function": {"name": "", "arguments": ""}},
-        )
-        if call.get("id"):
-            entry["id"] = call["id"]
-        if call.get("type"):
-            entry["type"] = call["type"]
-        fn = call.get("function")
-        if isinstance(fn, dict):
-            if fn.get("name"):
-                entry["function"]["name"] = fn["name"]
-            args_piece = fn.get("arguments")
-            if isinstance(args_piece, str):
-                entry["function"]["arguments"] += args_piece
+def merge_function_call_delta(aggregated, chunk):
+    """Handle Mistral's function.call.delta event — fields are top-level on the chunk."""
+    fc_id = chunk.get("id", "")
+    entry = aggregated.setdefault(
+        fc_id,
+        {"id": fc_id, "tool_call_id": "", "name": "", "arguments": ""},
+    )
+    if chunk.get("tool_call_id"):
+        entry["tool_call_id"] = chunk["tool_call_id"]
+    if chunk.get("name"):
+        entry["name"] = chunk["name"]
+    entry["arguments"] += chunk.get("arguments", "")
 
 
 def main():
@@ -169,7 +159,13 @@ def main():
             if "usage" in chunk:
                 usage = chunk["usage"]
 
-            if chunk.get("type") != "message.output.delta":
+            event_type = chunk.get("type", "")
+
+            if event_type == "function.call.delta":
+                merge_function_call_delta(tool_calls_by_index, chunk)
+                continue
+
+            if event_type != "message.output.delta":
                 continue
 
             content = chunk.get("content", "")
@@ -201,15 +197,12 @@ def main():
                 sys.stdout.write(content_token)
                 sys.stdout.flush()
 
-            merge_stream_tool_calls(tool_calls_by_index, chunk.get("tool_calls") or [])
-
         if in_reasoning:
             sys.stdout.write(reset)
         print()
 
         if tool_calls_by_index:
-            ordered = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index)]
-            print_tool_calls(ordered)
+            print_tool_calls(list(tool_calls_by_index.values()))
     else:
         data = json.loads(resp.read())
         if args.debug_stream:

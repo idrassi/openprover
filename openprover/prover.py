@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
@@ -195,6 +196,7 @@ class Prover:
         self._workers_active = False
         self._interrupt_count = 0
         self._last_interrupt_time = 0.0
+        self._interrupt_lock = threading.Lock()
         self.step_num = 0
         self._step_idx = 0
         self.step_history: list[dict] = []  # rolling window of last 3 steps
@@ -310,9 +312,11 @@ class Prover:
                 parts.append(stripped)
         self.theorem_name = " ".join(parts)
 
-    def _stream_cb(self, tab: str):
+    def _stream_cb(self, tab: str, output_only: bool = False):
         if not self.tui.supports_streaming:
             return None
+        if output_only:
+            return lambda t, k="text": self.tui.stream_text(t, kind=k, tab=tab) if k != "thinking" else None
         return lambda t, k="text": self.tui.stream_text(t, kind=k, tab=tab)
 
     def _setup_tui(self, *, autonomous: bool = False):
@@ -649,7 +653,7 @@ class Prover:
                             prompt=phase2_prompt,
                             system_prompt=system_prompt,
                             label=f"planner_step_{self.step_num}_phase2",
-                            stream_callback=self._stream_cb("planner"),
+                            stream_callback=self._stream_cb("planner", output_only=True),
                             archive_path=step_dir / "planner_call_phase2.md",
                             **({"max_tokens": phase2_max} if hasattr(self.planner_llm, 'answer_reserve') else {}),
                         )
@@ -1522,7 +1526,7 @@ class Prover:
                     prompt=phase2_prompt,
                     system_prompt=system_prompt,
                     label=f"{worker_id}_phase2",
-                    stream_callback=self._stream_cb(worker_id),
+                    stream_callback=self._stream_cb(worker_id, output_only=True),
                     archive_path=archive_path.parent / f"{archive_path.stem}_phase2.md" if archive_path else None,
                     max_tokens=answer_reserve,
                 )
@@ -1649,7 +1653,7 @@ class Prover:
                         tools=None,
                         max_tokens=answer_reserve,
                         label=f"{worker_id}_phase2",
-                        stream_callback=self._stream_cb(worker_id),
+                        stream_callback=self._stream_cb(worker_id, output_only=True),
                         archive_path=(
                             archive_path.parent / f"{archive_path.stem}_phase2.json"
                             if archive_path else None
@@ -2171,19 +2175,22 @@ class Prover:
         by ignoring calls within 100ms of the previous one.
         """
         now = time.time()
-        if now - self._last_interrupt_time < 0.1:
-            return
-        self._last_interrupt_time = now
-        self._interrupt_count += 1
+        with self._interrupt_lock:
+            if now - self._last_interrupt_time < 0.1:
+                return
+            self._last_interrupt_time = now
+            self._interrupt_count += 1
+            count = self._interrupt_count
+            workers_active = self._workers_active
 
-        if self._workers_active and self._interrupt_count == 1:
+        if workers_active and count == 1:
             # First Ctrl+C during workers: soft interrupt (force Phase 2 output)
             logger.info("Soft interrupt - forcing worker output")
             self.tui.log("Soft interrupt - forcing workers to wrap up", color="yellow")
             self.worker_llm.soft_interrupt()
             return
 
-        if self._interrupt_count >= 3:
+        if count >= 3:
             self.shutting_down = True
 
         # Hard interrupt (second during workers, first during planner, or exit)

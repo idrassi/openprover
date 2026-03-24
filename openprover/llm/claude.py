@@ -400,11 +400,17 @@ class LLMClient:
 
         elapsed_ms = int((time.time() - start) * 1000)
 
-        # Catch race: flags set while readline() blocked
-        if not soft_interrupted and not interrupted and self._soft_interrupted.is_set():
-            soft_interrupted = True
-        if not interrupted and not soft_interrupted and self._interrupted.is_set():
-            interrupted = True
+        # Catch race: flags set while readline() was blocked.
+        # _soft_interrupted may have been cleared by a sibling worker thread that
+        # already reached Phase 2, so also treat a signal-killed process with no
+        # result as a soft interrupt (negative returncode = killed by SIGKILL).
+        if not soft_interrupted and not interrupted:
+            if self._soft_interrupted.is_set():
+                soft_interrupted = True
+            elif self._interrupted.is_set():
+                interrupted = True
+            elif result_data is None and proc.returncode is not None and proc.returncode < 0:
+                soft_interrupted = True
 
         if soft_interrupted:
             partial_text = "".join(result_parts)

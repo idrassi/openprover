@@ -81,7 +81,7 @@ class LLMClient:
         archive_path: Path | None = None,
         tool_callback=None,
         tool_start_callback=None,
-        max_tokens: int | None = None,  # ignored - CLI uses max_output_tokens from __init__
+        max_tokens: int | None = None,  # overrides max_output_tokens for this call
     ) -> dict:
         """Make an LLM call and archive it.
 
@@ -141,6 +141,10 @@ class LLMClient:
         if json_schema:
             cmd.extend(["--json-schema", json.dumps(json_schema)])
 
+        env = self._env
+        if max_tokens:
+            env = {**self._env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max_tokens)}
+
         start = time.time()
 
         if use_streaming:
@@ -149,11 +153,12 @@ class LLMClient:
                 call_num, label, start, stream_callback, archive_path,
                 tool_callback=tool_callback,
                 tool_start_callback=tool_start_callback,
+                env=env,
             )
 
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, env=self._env,
+            stderr=subprocess.PIPE, text=True, env=env,
             start_new_session=True,
         )
         with self._procs_lock:
@@ -232,7 +237,7 @@ class LLMClient:
 
     def _call_streaming(self, cmd, prompt, system_prompt, json_schema,
                         call_num, label, start, callback, archive_path=None,
-                        tool_callback=None, tool_start_callback=None):
+                        tool_callback=None, tool_start_callback=None, env=None):
         """Stream text deltas to callback, return final result.
 
         Args:
@@ -244,7 +249,8 @@ class LLMClient:
         """
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, bufsize=1, env=self._env,
+            stderr=subprocess.PIPE, text=True, bufsize=1,
+            env=env if env is not None else self._env,
             start_new_session=True,
         )
         with self._procs_lock:

@@ -1236,6 +1236,10 @@ class Prover:
                                 "result": f"Worker error: {e}", "cost": 0.0,
                                 "duration_ms": 0, "raw": {}, "error": str(e),
                             }
+                        wresp = worker_resps[idx]
+                        if wresp.get("error") and wresp["error"] != "interrupted":
+                            self.tui.tab_log(worker_ids[idx],
+                                             f"Error: {wresp['error']}", color="red")
                         done_count += 1
                         logger.info("Worker %d/%d done", done_count, n)
                         self.tui.mark_worker_done(worker_ids[idx])
@@ -1576,6 +1580,7 @@ class Prover:
                     "duration_ms": 0, "raw": {}, "error": "interrupted"}
         except RuntimeError as e:
             self.tui.stream_end(tab=worker_id)
+            self.tui.tab_log(worker_id, f"Error: {e}", color="red")
             resp = {"result": f"Worker error: {e}", "cost": 0.0,
                     "duration_ms": 0, "raw": {}, "error": str(e)}
         resp["tool_calls_log"] = tool_calls_log
@@ -1583,7 +1588,7 @@ class Prover:
 
     def _run_worker_multi_turn(self, prompt: str, system_prompt: str,
                                worker_id: str, archive_path: Path | None) -> dict:
-        """Multi-turn tool-calling worker (vLLM)."""
+        """Multi-turn tool-calling worker (vLLM/Mistral)."""
         tool_calls_log: list[dict] = []
         messages = [
             {"role": "system", "content": system_prompt},
@@ -1592,6 +1597,7 @@ class Prover:
         total_cost = 0.0
         total_duration = 0
         call_idx = 0
+        conversation_id = None  # Mistral stateful conversation
 
         try:
             while True:
@@ -1600,17 +1606,23 @@ class Prover:
                     archive_path.parent / f"{archive_path.stem}_{call_idx}.md"
                     if archive_path else None
                 )
+                chat_kwargs = {}
+                if conversation_id:
+                    chat_kwargs["conversation_id"] = conversation_id
                 resp = self.worker_llm.chat(
                     messages=messages,
                     tools=WORKER_TOOLS,
                     label=f"{worker_id}_turn_{call_idx}",
                     stream_callback=self._stream_cb(worker_id),
                     archive_path=call_archive,
+                    **chat_kwargs,
                 )
                 self.tui.stream_end(tab=worker_id)
                 resp = _use_thinking_as_result(resp)
                 total_cost += resp["cost"]
                 total_duration += resp["duration_ms"]
+                if resp.get("conversation_id"):
+                    conversation_id = resp["conversation_id"]
                 call_idx += 1
 
                 finish = resp.get("finish_reason", "stop")
@@ -1677,6 +1689,9 @@ class Prover:
                     })
                     self.tui.stream_start("forcing output...", tab=worker_id)
                     answer_reserve = getattr(self.worker_llm, 'answer_reserve', None)
+                    phase2_kwargs = {}
+                    if conversation_id:
+                        phase2_kwargs["conversation_id"] = conversation_id
                     resp = self.worker_llm.chat(
                         messages=messages,
                         tools=None,
@@ -1687,6 +1702,7 @@ class Prover:
                             archive_path.parent / f"{archive_path.stem}_phase2.json"
                             if archive_path else None
                         ),
+                        **phase2_kwargs,
                     )
                     self.tui.stream_end(tab=worker_id)
                     total_cost += resp["cost"]
@@ -1712,6 +1728,7 @@ class Prover:
                       "duration_ms": total_duration, "raw": {}, "error": "interrupted"}
         except RuntimeError as e:
             self.tui.stream_end(tab=worker_id)
+            self.tui.tab_log(worker_id, f"Error: {e}", color="red")
             result = {"result": f"Worker error: {e}", "cost": total_cost,
                       "duration_ms": total_duration, "raw": {}, "error": str(e)}
 

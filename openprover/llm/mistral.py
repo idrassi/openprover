@@ -136,9 +136,13 @@ class MistralClient:
 
     # ── HTTP helper ──────────────────────────────────────────────────
 
-    def _request(self, payload: dict, timeout: int = 600):
+    def _request(self, payload: dict, timeout: int = 600,
+                  conversation_id: str | None = None):
+        url = f"{BASE_URL}/v1/conversations"
+        if conversation_id:
+            url = f"{url}/{conversation_id}"
         req = urllib.request.Request(
-            f"{BASE_URL}/v1/conversations",
+            url,
             data=json.dumps(payload).encode(),
             headers={
                 "Content-Type": "application/json",
@@ -218,31 +222,76 @@ class MistralClient:
         label: str = "",
         stream_callback=None,
         archive_path: Path | None = None,
+        conversation_id: str | None = None,
     ) -> dict:
         """Multi-turn chat with optional tool calling.
 
         Args:
             messages: OpenAI-format message list.
             tools: OpenAI-format tool definitions, or None.
+            conversation_id: If provided, appends only new tool results
+                to an existing Mistral conversation (preserves thinking).
         """
         self.call_count += 1
         call_num = self.call_count
-
-        # Separate system message from inputs
-        instructions = ""
-        inputs = []
-        for msg in messages:
-            if msg["role"] == "system":
-                instructions = msg["content"]
-            else:
-                inputs.append(msg)
 
         prompt_text = json.dumps(messages, ensure_ascii=False)
         self._archive(call_num, label, prompt_text, "", None,
                       None, None, 0, archive_path)
 
-        logger.info("[%s] chat %s%s", label, self.model,
-                    " (streaming)" if stream_callback else "")
+        if conversation_id:
+            # Continuation: only send new tool results (and any
+            # trailing user message for Phase 2).
+            inputs = []
+            for msg in reversed(messages):
+                role = msg["role"]
+                if role == "tool":
+                    inputs.append({
+                        "tool_call_id": msg.get("tool_call_id", ""),
+                        "result": msg.get("content", ""),
+                        "type": "function.result",
+                    })
+                elif role == "user":
+                    # Phase 2 continuation prompt
+                    inputs.append({"role": "user", "content": msg["content"]})
+                else:
+                    break  # stop at the assistant/system boundary
+            inputs.reverse()
+            instructions = ""
+        else:
+            # First call: convert full message list.
+            instructions = ""
+            inputs = []
+            for msg in messages:
+                role = msg["role"]
+                if role == "system":
+                    instructions = msg["content"]
+                elif role == "user":
+                    inputs.append({"role": "user", "content": msg["content"]})
+                elif role == "assistant":
+                    content = msg.get("content") or ""
+                    if content:
+                        inputs.append({
+                            "content": content,
+                            "type": "message.output",
+                        })
+                    for tc in msg.get("tool_calls") or []:
+                        inputs.append({
+                            "tool_call_id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                            "type": "function.call",
+                        })
+                elif role == "tool":
+                    inputs.append({
+                        "tool_call_id": msg.get("tool_call_id", ""),
+                        "result": msg.get("content", ""),
+                        "type": "function.result",
+                    })
+
+        logger.info("[%s] chat %s%s conv=%s", label, self.model,
+                    " (streaming)" if stream_callback else "",
+                    conversation_id or "(new)")
 
         payload = self._build_payload(
             inputs=inputs,
@@ -250,6 +299,7 @@ class MistralClient:
             tools=tools,
             max_tokens=max_tokens,
             stream=bool(stream_callback),
+            continuation=bool(conversation_id),
         )
         start = time.time()
 
@@ -263,11 +313,13 @@ class MistralClient:
                 return self._stream(
                     payload, call_num, label, start, stream_callback, archive_path,
                     prompt=prompt_text, system_prompt="",
+                    conversation_id=conversation_id,
                 )
             else:
                 return self._non_streaming(
                     payload, call_num, label, start, archive_path,
                     prompt=prompt_text, system_prompt="",
+                    conversation_id=conversation_id,
                 )
         except (urllib.error.URLError, ConnectionError) as e:
             elapsed_ms = int((time.time() - start) * 1000)
@@ -278,29 +330,46 @@ class MistralClient:
     # ── Payload builder ──────────────────────────────────────────────
 
     def _build_payload(self, *, inputs, instructions="", tools=None,
-                       max_tokens=None, stream=False, no_thinking=False):
+                       max_tokens=None, stream=False, no_thinking=False,
+                       continuation=False):
         effective_max = max_tokens if max_tokens is not None else self.max_output_tokens
-        payload = {
-            "model": self.model,
-            "inputs": inputs,
-            "instructions": instructions,
-            "tools": tools or [],  # explicit [] disables auto tool calling
-            "stream": stream,
-            "completion_args": {
-                "temperature": 1.0,
-                "max_tokens": effective_max,
-                "top_p": 1,
-                "reasoning_effort": "none" if no_thinking else "high",
-            },
-        }
+        if continuation:
+            # Continuation of existing conversation: only inputs,
+            # stream, and completion_args.  model/tools/instructions
+            # are already set on the conversation.
+            payload = {
+                "inputs": inputs,
+                "stream": stream,
+                "completion_args": {
+                    "temperature": 1.0,
+                    "max_tokens": effective_max,
+                    "top_p": 1,
+                    "reasoning_effort": "none" if no_thinking else "high",
+                },
+            }
+        else:
+            payload = {
+                "model": self.model,
+                "inputs": inputs,
+                "instructions": instructions,
+                "tools": tools or [],
+                "stream": stream,
+                "completion_args": {
+                    "temperature": 1.0,
+                    "max_tokens": effective_max,
+                    "top_p": 1,
+                    "reasoning_effort": "none" if no_thinking else "high",
+                },
+            }
         return payload
 
     # ── Non-streaming path ───────────────────────────────────────────
 
     def _non_streaming(self, payload, call_num, label, start, archive_path,
-                       *, prompt="", system_prompt="", json_schema=None):
+                       *, prompt="", system_prompt="", json_schema=None,
+                       conversation_id=None):
         try:
-            resp = self._request(payload)
+            resp = self._request(payload, conversation_id=conversation_id)
             raw = json.loads(resp.read())
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")
@@ -335,6 +404,7 @@ class MistralClient:
         logger.info("[%s] done %dms", label, elapsed_ms)
 
         finish_reason = "tool_calls" if tool_calls else "stop"
+        conv_id = raw.get("conversation_id", conversation_id)
         return {
             "result": result_text,
             "thinking": thinking_text,
@@ -343,14 +413,16 @@ class MistralClient:
             "raw": raw,
             "finish_reason": finish_reason,
             "tool_calls": tool_calls,
+            "conversation_id": conv_id,
         }
 
     # ── Streaming path ───────────────────────────────────────────────
 
     def _stream(self, payload, call_num, label, start, callback, archive_path,
-                *, prompt="", system_prompt="", json_schema=None):
+                *, prompt="", system_prompt="", json_schema=None,
+                conversation_id=None):
         try:
-            resp = self._request(payload)
+            resp = self._request(payload, conversation_id=conversation_id)
         except urllib.error.HTTPError as e:
             body = e.read().decode(errors="replace")
             elapsed_ms = int((time.time() - start) * 1000)
@@ -360,7 +432,9 @@ class MistralClient:
 
         thinking_parts: list[str] = []
         output_parts: list[str] = []
+        _logged_content_type = False
         tool_call_acc: dict[str, dict] = {}
+        conv_id = conversation_id
         interrupted = False
         soft_interrupted = False
         sse_stop_reason = None
@@ -388,10 +462,18 @@ class MistralClient:
 
             event_type = chunk.get("type", "")
 
-            if event_type == "function.call.delta":
+            if event_type == "conversation.response.started":
+                conv_id = chunk.get("conversation_id", conv_id)
+            elif event_type == "function.call.delta":
                 _merge_tool_call_delta(tool_call_acc, chunk)
             elif event_type == "message.output.delta":
-                _parse_content_delta(chunk.get("content", ""),
+                content = chunk.get("content", "")
+                if not _logged_content_type and content:
+                    ctype = type(content).__name__
+                    detail = content.get("type", "?") if isinstance(content, dict) else repr(content[:40])
+                    logger.debug("[stream] first content chunk: %s %s", ctype, detail)
+                    _logged_content_type = True
+                _parse_content_delta(content,
                                      thinking_parts, output_parts, callback)
             elif event_type:
                 logger.debug("[stream] unhandled event type: %s keys=%s",
@@ -444,6 +526,7 @@ class MistralClient:
             "raw": {"result": result_text, "tool_calls": tool_calls},
             "finish_reason": finish_reason,
             "tool_calls": tool_calls,
+            "conversation_id": conv_id,
         }
 
     # ── Archiving ────────────────────────────────────────────────────

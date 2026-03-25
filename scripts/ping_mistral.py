@@ -78,6 +78,9 @@ def main():
     parser.add_argument("--debug-stream", action=argparse.BooleanOptionalAction,
                         default=False,
                         help="Print raw SSE debug info to stderr (default: false)")
+    parser.add_argument("--test-multi-turn", action="store_true",
+                        help="Test multi-turn tool calling: replay a fake tool "
+                             "call history to verify the entry format works")
     args = parser.parse_args()
 
     api_key = os.environ.get("MISTRAL_API_KEY")
@@ -96,9 +99,160 @@ def main():
     if args.reasoning_effort:
         completion_args["reasoning_effort"] = args.reasoning_effort
 
+    if args.test_multi_turn:
+        # Two-step test: 1) send prompt with tool → get tool call + conv_id
+        # 2) continue conversation with tool result using conv_id
+        # This tests whether thinking stays structured in multi-turn.
+        tools = [build_example_calculator_tool()]
+        completion_args["reasoning_effort"] = "high"
+        completion_args["temperature"] = 1.0
+        args.debug_stream = True
+
+        print("Step 1: Sending prompt with calculator tool...")
+        print("─" * 60)
+
+        step1_payload = json.dumps({
+            "model": args.model,
+            "inputs": [{"role": "user", "content":
+                         "Use the calculator tool to compute 17 + 25."}],
+            "tools": tools,
+            "stream": True,
+            "completion_args": completion_args,
+        }).encode()
+
+        step1_req = urllib.request.Request(
+            "https://api.mistral.ai/v1/conversations",
+            data=step1_payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        try:
+            step1_resp = urllib.request.urlopen(step1_req, timeout=120)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            print(f"ERROR: HTTP {e.code}: {body}", file=sys.stderr)
+            sys.exit(1)
+
+        conv_id = None
+        tc_acc = {}
+        for line in step1_resp:
+            line = line.decode(errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].lstrip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            etype = chunk.get("type", "")
+            if etype == "conversation.response.started":
+                conv_id = chunk.get("conversation_id")
+                print(f"  conversation_id: {conv_id}")
+            elif etype == "function.call.delta":
+                merge_function_call_delta(tc_acc, chunk)
+            elif etype == "message.output.delta":
+                content = chunk.get("content", "")
+                fmt = "dict" if isinstance(content, dict) else "str"
+                if isinstance(content, dict):
+                    print(f"  [content {fmt} type={content.get('type','?')}]",
+                          end="", flush=True)
+                elif content:
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
+
+        print()
+        if tc_acc:
+            tc = list(tc_acc.values())[0]
+            tc_id = tc.get("tool_call_id") or tc.get("id")
+            print(f"  Tool call: {tc['name']}({tc['arguments']})"
+                  f" id={tc_id}")
+        else:
+            print("  No tool calls — can't continue multi-turn test")
+            sys.exit(0)
+
+        # Execute the "tool" (just return 42)
+        tool_result = '{"result": 42}'
+        print(f"\nStep 2: Continuing conversation {conv_id} with tool result...")
+        print("  Watch for content format: dict{{'type':'thinking'}} vs plain str")
+        print("─" * 60)
+
+        step2_payload = json.dumps({
+            "inputs": [{
+                "tool_call_id": tc_id,
+                "result": tool_result,
+                "type": "function.result",
+            }],
+            "stream": True,
+            "completion_args": completion_args,
+        }).encode()
+
+        step2_req = urllib.request.Request(
+            f"https://api.mistral.ai/v1/conversations/{conv_id}",
+            data=step2_payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        try:
+            step2_resp = urllib.request.urlopen(step2_req, timeout=120)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            print(f"ERROR: HTTP {e.code}: {body}", file=sys.stderr)
+            sys.exit(1)
+
+        first_content = True
+        dim = "\033[2m" if sys.stdout.isatty() else ""
+        reset = "\033[0m" if sys.stdout.isatty() else ""
+        for line in step2_resp:
+            line = line.decode(errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].lstrip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            etype = chunk.get("type", "")
+            if etype == "message.output.delta":
+                content = chunk.get("content", "")
+                if first_content and content:
+                    fmt = type(content).__name__
+                    if isinstance(content, dict):
+                        print(f"  ** Content format: {fmt}"
+                              f" type={content.get('type','?')} **")
+                    else:
+                        print(f"  ** Content format: {fmt} **")
+                    first_content = False
+                if isinstance(content, str) and content:
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
+                elif isinstance(content, dict):
+                    ctype = content.get("type", "")
+                    if ctype == "thinking":
+                        for p in content.get("thinking", []):
+                            sys.stdout.write(f'{dim}{p.get("text","")}{reset}')
+                    else:
+                        for p in content.get("content", []):
+                            sys.stdout.write(p.get("text", ""))
+                    sys.stdout.flush()
+
+        print("\n" + "─" * 60)
+        print("Done. If content was 'dict type=thinking', thinking is preserved.")
+        print("If content was 'str', thinking is lost in multi-turn.")
+        sys.exit(0)
+    else:
+        inputs = [{"role": "user", "content": args.prompt}]
+
     payload = json.dumps({
         "model": args.model,
-        "inputs": [{"role": "user", "content": args.prompt}],
+        "inputs": inputs,
         "tools": tools,
         "stream": args.stream,
         "completion_args": completion_args,
@@ -133,8 +287,6 @@ def main():
         sys.exit(1)
 
     usage = {}
-    dim = "\033[2m" if sys.stdout.isatty() else ""
-    reset = "\033[0m" if sys.stdout.isatty() else ""
 
     if args.stream:
         tool_calls_by_index = {}

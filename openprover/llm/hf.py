@@ -413,6 +413,7 @@ class HFClient:
         label: str = "",
         stream_callback=None,
         archive_path: Path | None = None,
+        **_kwargs,
     ) -> dict:
         """Multi-turn chat with optional tool calling (vLLM only).
 

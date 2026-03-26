@@ -193,7 +193,8 @@ class Prover:
                  lean_items: bool = False,
                  lean_worker_tools: bool = False,
                  history_budget: int = 0,
-                 on_budget_out: str | None = None):
+                 on_budget_out: str | None = None,
+                 on_rate_limited: str | None = None):
         self.model = model_name
         self._make_llm = make_llm
         self._make_worker_llm = make_worker_llm or make_llm
@@ -201,8 +202,10 @@ class Prover:
         self.lean_worker_tools = lean_worker_tools
         self._history_budget_override = history_budget
         self.on_budget_out = on_budget_out  # "backoff", "exit", or None
+        self.on_rate_limited = on_rate_limited  # "backoff", "exit", or None
         self._spending_limit_hit = False
         self._backoff_delay = 4  # seconds, escalates: 4 → 16 → 64 (stays at 64)
+        self._rate_limit_backoff = 4  # separate backoff for --on-rate-limited
         self.budget = budget
         self.autonomous = autonomous
         self.verbose = verbose
@@ -637,7 +640,7 @@ class Prover:
                     self.tui.stream_end(tab="planner")
                     logger.error("Planner error: %s", e)
                     self.tui.log(f"Error: {e}", color="red")
-                    action = self._check_spending_limit(e)
+                    action = self._check_error_policy(e)
                     if action == "retry":
                         continue
                     self._save_step_meta(step_dir, status="llm_error", error=str(e))
@@ -715,7 +718,7 @@ class Prover:
                             self.tui.stream_end(tab="planner")
                             logger.error("Phase 2 error: %s", e)
                             self.tui.log(f"Error: {e}", color="red")
-                            action = self._check_spending_limit(e)
+                            action = self._check_error_policy(e)
                             if action == "retry":
                                 continue
                             self._save_step_meta(step_dir, status="llm_error", error=str(e))
@@ -1497,7 +1500,7 @@ class Prover:
                 break
             except RuntimeError as e:
                 self.tui.stream_end(tab=wid)
-                if self._check_spending_limit(e) == "retry":
+                if self._check_error_policy(e) == "retry":
                     continue
                 result = f"Literature search failed: {e}"
                 self.tui.log(f"Search error: {e}", color="red")
@@ -1646,7 +1649,7 @@ class Prover:
                 break
             except RuntimeError as e:
                 self.tui.stream_end(tab=worker_id)
-                action = self._check_spending_limit(e)
+                action = self._check_error_policy(e)
                 if action == "retry":
                     continue
                 self.tui.tab_log(worker_id, f"Error: {e}", color="red")
@@ -1852,7 +1855,7 @@ class Prover:
                       "duration_ms": total_duration, "raw": {}, "error": "interrupted"}
         except RuntimeError as e:
             self.tui.stream_end(tab=worker_id)
-            action = self._check_spending_limit(e)
+            action = self._check_error_policy(e)
             if action == "retry":
                 # Retry: re-enter the multi-turn loop from scratch
                 return self._run_worker_multi_turn(prompt, system_prompt, worker_id, archive_path)
@@ -2013,7 +2016,7 @@ class Prover:
                 break
             except RuntimeError as e:
                 self.tui.stream_end(tab=verifier_id)
-                if self._check_spending_limit(e) == "retry":
+                if self._check_error_policy(e) == "retry":
                     continue
                 resp = {"result": f"Verifier error: {e}", "cost": 0.0,
                         "duration_ms": 0, "raw": {}, "error": str(e)}
@@ -2103,9 +2106,48 @@ class Prover:
         # No --on-budget-out flag: default behavior (continue to next step)
         return "continue"
 
+    @staticmethod
+    def _is_rate_limited_error(error: Exception) -> bool:
+        """Check if a RuntimeError indicates an HTTP 429 rate limit."""
+        return "429" in str(error)
+
+    def _check_rate_limited(self, error: Exception) -> str:
+        """Handle HTTP 429 errors based on --on-rate-limited.
+
+        Returns 'stop', 'retry' (after sleeping), or 'continue'.
+        """
+        if not self._is_rate_limited_error(error):
+            return "continue"
+
+        if self.on_rate_limited == "exit":
+            self._spending_limit_hit = True
+            self.tui.log("Rate limited (429) - exiting (--on-rate-limited exit).", color="yellow")
+            return "stop"
+
+        if self.on_rate_limited == "backoff":
+            delay = self._rate_limit_backoff
+            self.tui.log(f"Rate limited (429) - backing off {delay}s...", color="yellow")
+            time.sleep(delay)
+            self._rate_limit_backoff = min(delay * 4, 64)
+            return "retry"
+
+        # No --on-rate-limited flag: default behavior
+        return "continue"
+
+    def _check_error_policy(self, error: Exception) -> str:
+        """Check both --on-rate-limited and --on-budget-out policies.
+
+        Returns 'stop', 'retry', or 'continue'.
+        """
+        action = self._check_rate_limited(error)
+        if action != "continue":
+            return action
+        return self._check_spending_limit(error)
+
     def _track_output_tokens(self, resp: dict):
         """Add output tokens from an LLM response to the budget."""
         self._backoff_delay = 4  # reset on success
+        self._rate_limit_backoff = 4  # reset on success
         tokens = self._extract_token_usage(resp)
         n = tokens["output_tokens"]
         if n > 0:

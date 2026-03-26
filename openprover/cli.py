@@ -242,8 +242,10 @@ def _cmd_prove():
     parser.add_argument("--history-budget", type=int, default=0, metavar="CHARS", help="Char budget for planner history (default: auto from model context)")
     parser.add_argument("--effort", choices=["low", "medium", "high", "max"], default=None,
                         help="Claude reasoning effort level (default: max for opus, high for others; Claude models only)")
-    parser.add_argument("--on-budget-out", choices=["backoff", "exit"], default=None,
-                        help="Action when rate-limited (429): backoff = exponential retry, exit = stop immediately (Claude models only)")
+    parser.add_argument("--on-budget-out", choices=["backoff", "exit"], default="exit",
+                        help="Action when spending/rate limit hit: backoff = exponential retry, exit = stop immediately (default: exit; Claude models only)")
+    parser.add_argument("--on-rate-limited", choices=["backoff", "exit"], default="backoff",
+                        help="Action on HTTP 429: backoff = exponential retry, exit = stop immediately (default: backoff)")
     parser.add_argument("--headless", action="store_true", help="Non-interactive mode (logs to stdout, errors to stderr)")
     parser.add_argument("--verbose", action="store_true", help="Show full LLM responses")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -382,7 +384,7 @@ def _cmd_prove():
             effective_effort = None
 
     # --on-budget-out is only meaningful for Claude models
-    if args.on_budget_out:
+    if _cli_flag_given("--on-budget-out"):
         non_claude = [m for m in (planner_model, worker_model) if m not in CLAUDE_MODELS]
         if non_claude:
             parser.error(
@@ -508,6 +510,7 @@ def _cmd_prove():
         lean_worker_tools=args.lean_worker_tools,
         history_budget=args.history_budget,
         on_budget_out=args.on_budget_out,
+        on_rate_limited=args.on_rate_limited,
     )
 
     # Clear the early status line before TUI takes over

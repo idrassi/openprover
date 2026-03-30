@@ -25,6 +25,7 @@ Modes:
 - Python 3.10+
 - **Claude** (default): [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` command on PATH)
 - **Codex** (alternative): [Codex CLI](https://developers.openai.com/codex/cli/) (`codex` command on PATH)
+- **Leanstral** (alternative): Mistral's Lean-specialized model; requires `MISTRAL_API_KEY` (get one at https://console.mistral.ai/)
 - **Local models** (alternative): any OpenAI-compatible server such as [vLLM](https://github.com/vllm-project/vllm); pass `--provider-url` to point at it
 
 ## Install
@@ -110,12 +111,13 @@ openprover --theorem examples/addition.md \
 | `--provider` | auto | Backend provider for both planner and worker |
 | `--planner-provider` | | Override provider for planner |
 | `--worker-provider` | | Override provider for worker |
-| `--model` | auto | Model for both planner and worker (`sonnet` for Claude by default, Codex CLI default for Codex, `minimax-m2.5` for local) |
+| `--model` | auto | Model for both planner and worker (`sonnet` for Claude by default, Codex CLI default for Codex, `minimax-m2.5` for local, `leanstral` for Mistral) |
 | `--planner-model` | | Override model for planner |
 | `--worker-model` | | Override model for worker |
 | `--reasoning-effort` | | Reasoning effort for both planner and worker |
 | `--planner-reasoning-effort` | | Override reasoning effort for planner |
 | `--worker-reasoning-effort` | | Override reasoning effort for worker |
+| `--effort` | | Deprecated alias for `--reasoning-effort` on Claude models |
 | `--max-time` | `4h` | Wall-clock time budget (e.g. `30m`, `2h`) |
 | `--max-tokens` | | Output token budget (mutually exclusive with `--max-time`) |
 | `--conclude-after` | `0.99` | Fraction of budget that triggers conclusion phase (0.9-1.0) |
@@ -127,7 +129,7 @@ openprover --theorem examples/addition.md \
 | `--lean-theorem` | | Path to THEOREM.lean (requires `--lean-project`) |
 | `--proof` | | Path to existing PROOF.md (formalize-only mode) |
 | `--lean-items` | auto | Allow saving .lean items to the repo (auto-enabled with `--lean-project`) |
-| `--lean-worker-tools` | auto | Worker tool calls (lean_verify, lean_search) via MCP/vLLM (auto-enabled with `--lean-project` + capable worker) |
+| `--lean-worker-tools` | auto | Worker tool calls (lean_verify, lean_search) via MCP/native tool calling (auto-enabled with `--lean-project` + capable worker) |
 | `--headless` | off | Non-interactive mode (logs to stdout, implies `--autonomous`) |
 | `--verbose` | off | Show full LLM responses |
 | `--read-only` | off | Inspect run without resuming |
@@ -137,6 +139,7 @@ openprover --theorem examples/addition.md \
 Built-in model aliases:
 - `sonnet`, `opus`: Claude CLI backends
 - `codex`: Codex CLI backend using the local Codex CLI default model
+- `leanstral`: Mistral Conversations API backend
 - `minimax-m2.5`: local OpenAI-compatible/vLLM backend
 
 For Codex-specific model names such as `gpt-5.4` or `gpt-5.2`, use `--provider codex --model <name>` or the shorthand `--model codex:<name>`.
@@ -144,7 +147,7 @@ For Codex-specific model names such as `gpt-5.4` or `gpt-5.2`, use `--provider c
 Reasoning effort:
 - Claude supports `low`, `medium`, `high`, `max`
 - Codex supports `none`, `minimal`, `low`, `medium`, `high`, `xhigh`
-- Local OpenAI-compatible models do not currently support `--reasoning-effort` in OpenProver
+- Mistral/Leanstral and local OpenAI-compatible models do not currently support `--reasoning-effort` in OpenProver
 
 Codex CLI notes:
 - `codex exec --json` only yields the final assistant message, so OpenProver cannot stream partial Codex text into the TUI
@@ -190,7 +193,7 @@ When `--lean-project` is set with a tool-capable worker model, workers get acces
 | `lean_verify(code)` | Compile Lean 4 code via `lake env lean`, returns OK or compiler errors |
 | `lean_search(query)` | Search Mathlib/Lean declarations by natural language query |
 
-Tools are provided via MCP (Claude or Codex workers) or native tool calling (vLLM workers). Actions are shown in the worker tab and can be browsed with arrow keys.
+Tools are provided via MCP (Claude or Codex workers) or native tool calling (vLLM or Mistral workers). Actions are shown in the worker tab and can be browsed with arrow keys.
 
 ## Output
 

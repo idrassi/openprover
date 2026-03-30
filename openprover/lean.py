@@ -1,4 +1,4 @@
-"""Lean 4 integration - parsing, assembly, verification, file management."""
+"""Lean 4 integration — parsing, assembly, verification, file management."""
 
 import logging
 import re
@@ -7,42 +7,6 @@ import subprocess
 from pathlib import Path
 
 logger = logging.getLogger("openprover.lean")
-
-# Matches Lean 4 diagnostic lines like "6:8: error ..." (after file path stripping)
-_LEAN_ERROR_RE = re.compile(r"^\d+:\d+: error", re.MULTILINE)
-
-
-def lean_has_errors(feedback: str) -> bool:
-    """Return True if feedback contains Lean error diagnostics (not just warnings/info)."""
-    return bool(_LEAN_ERROR_RE.search(feedback))
-
-
-# Matches ```lean ... ``` or ```  ... ``` code fences (with optional language tag)
-_CODE_FENCE_RE = re.compile(
-    r"^\s*```\w*\s*\n(.*?)^\s*```\s*$",
-    re.MULTILINE | re.DOTALL,
-)
-# Matches <code>...</code> or <code lang="lean">...</code>
-_CODE_TAG_RE = re.compile(
-    r"<code(?:\s[^>]*)?>(.+?)</code>",
-    re.DOTALL,
-)
-
-
-def strip_code_fences(code: str) -> str:
-    """Strip markdown code fences or HTML code tags from LLM-generated code.
-
-    Models sometimes wrap tool arguments in ```lean ... ```, <code>...</code>,
-    or similar. This extracts the inner content, or returns the original if
-    no wrapping found.
-    """
-    m = _CODE_FENCE_RE.search(code)
-    if m:
-        return m.group(1)
-    m = _CODE_TAG_RE.search(code)
-    if m:
-        return m.group(1)
-    return code
 
 
 class LeanTheorem:
@@ -151,12 +115,6 @@ def run_lean_check(lean_file: Path, project_dir: Path,
         if stderr:
             parts.append(stderr)
         feedback = '\n'.join(parts)
-        # Strip the full file path prefix from each diagnostic line
-        file_prefix = str(lean_file.resolve()) + ":"
-        feedback = '\n'.join(
-            line[len(file_prefix):] if line.startswith(file_prefix) else line
-            for line in feedback.splitlines()
-        )
         logger.info("Lean check failed: %s", lean_file.name)
         return (False, feedback, cmd_info)
 
@@ -165,42 +123,7 @@ def run_lean_check(lean_file: Path, project_dir: Path,
         return (False, f"Lean verification timed out after {timeout}s", cmd_info)
     except FileNotFoundError:
         logger.error("lake command not found")
-        return (False, "lake command not found - is Lean/Lake installed and on PATH?", cmd_info)
-
-
-def merge_lean_imports(existing: str, new_snippet: str) -> str:
-    """Merge two Lean code blocks, deduplicating imports at the top."""
-    import_lines: list[str] = []
-    seen_imports: set[str] = set()
-    body_existing: list[str] = []
-    body_new: list[str] = []
-
-    for line in existing.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("import "):
-            if stripped not in seen_imports:
-                seen_imports.add(stripped)
-                import_lines.append(line)
-        else:
-            body_existing.append(line)
-
-    for line in new_snippet.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("import "):
-            if stripped not in seen_imports:
-                seen_imports.add(stripped)
-                import_lines.append(line)
-        else:
-            body_new.append(line)
-
-    # Ensure two blank lines before the new block
-    if body_existing and body_new:
-        # Strip trailing blank lines from existing, then add two
-        while body_existing and body_existing[-1].strip() == '':
-            body_existing.pop()
-        body_existing.append('')
-        body_existing.append('')
-    return '\n'.join(import_lines + body_existing + body_new)
+        return (False, "lake command not found — is Lean/Lake installed and on PATH?", cmd_info)
 
 
 class LeanWorkDir:
@@ -215,8 +138,7 @@ class LeanWorkDir:
     def make_file(self, slug: str, content: str, ext: str = ".lean") -> Path:
         """Write a file with slug-based name + random suffix."""
         suffix = secrets.token_hex(3)  # 6 hex chars
-        flat_slug = slug.replace("/", "_")
-        path = self.dir / f"{flat_slug}-{suffix}{ext}"
+        path = self.dir / f"{slug}-{suffix}{ext}"
         path.write_text(content)
         return path
 

@@ -7,6 +7,7 @@ def test_web_search_capability_matches_worker_backend():
     assert supports_web_search("sonnet") is True
     assert supports_web_search("opus") is True
     assert supports_web_search("minimax-m2.5") is False
+    assert supports_web_search("leanstral") is False
 
 
 def test_llm_supports_web_search_uses_model_alias_when_present():

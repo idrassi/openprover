@@ -10,10 +10,11 @@ from pathlib import Path
 
 from openprover import __version__
 from .budget import Budget, parse_duration
-from .llm import LLMClient, HFClient
+from .llm import LLMClient, HFClient, MistralClient
 from .model_caps import (
     CLAUDE_MODELS,
     HF_MODEL_MAP,
+    MISTRAL_MODEL_MAP,
     TOOL_CAPABLE_MODELS,
     VLLM_MODELS,
     supports_web_search,
@@ -34,7 +35,7 @@ def _cli_flag_given(*flags: str) -> bool:
 def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
                      budget_mode: str, budget_limit: int,
                      conclude_after: float,
-                     parallelism: int, give_up_ratio: float,
+                     parallelism: int,
                      isolation: bool, autonomous: bool, mode: str,
                      lean_project_dir: Path | None, lean_items: bool,
                      lean_worker_tools: bool, provider_url: str,
@@ -48,7 +49,6 @@ def _save_run_config(work_dir: Path, *, planner_model: str, worker_model: str,
         f'budget_limit = {budget_limit}',
         f'conclude_after = {conclude_after}',
         f'parallelism = {parallelism}',
-        f'give_up_ratio = {give_up_ratio}',
         f'isolation = {str(isolation).lower()}',
         f'autonomous = {str(autonomous).lower()}',
         f'mode = "{mode}"',
@@ -231,7 +231,7 @@ def _cmd_prove():
         prog="openprover",
         description="Theorem prover powered by language models",
     )
-    model_choices = ["sonnet", "opus", "minimax-m2.5"]
+    model_choices = ["sonnet", "opus", "minimax-m2.5", "leanstral"]
     parser.add_argument("run_dir", nargs="?", help="Working directory (resumes if it contains an existing run)")
     parser.add_argument("--theorem", metavar="FILE", help="Path to theorem statement file (.md)")
     parser.add_argument("--model", default="sonnet", choices=model_choices, help="Model to use for both planner and worker (default: sonnet)")
@@ -246,9 +246,14 @@ def _cmd_prove():
     parser.add_argument("--read-only", action="store_true", help="Inspect run without resuming")
     parser.add_argument("--isolation", action=argparse.BooleanOptionalAction, default=True, help="Disable web searches (no literature_search action)")
     parser.add_argument("-P", "--parallelism", type=int, default=1, help="Max parallel workers per spawn step (default: 1)")
-    parser.add_argument("--give-up-after", type=float, default=0.5, metavar="RATIO", help="Fraction of budget before give_up action is allowed (default: 0.5)")
     parser.add_argument("--answer-reserve", type=int, default=4096, metavar="TOKENS", help="Tokens reserved for answer after thinking (default: 4096)")
     parser.add_argument("--history-budget", type=int, default=0, metavar="CHARS", help="Char budget for planner history (default: auto from model context)")
+    parser.add_argument("--effort", choices=["low", "medium", "high", "max"], default=None,
+                        help="Claude reasoning effort level (default: max for opus, high for others; Claude models only)")
+    parser.add_argument("--on-budget-out", choices=["backoff", "exit"], default="exit",
+                        help="Action when spending/rate limit hit: backoff = exponential retry, exit = stop immediately (default: exit; Claude models only)")
+    parser.add_argument("--on-rate-limited", choices=["backoff", "exit"], default="backoff",
+                        help="Action on HTTP 429: backoff = exponential retry, exit = stop immediately (default: backoff)")
     parser.add_argument("--headless", action="store_true", help="Non-interactive mode (logs to stdout, errors to stderr)")
     parser.add_argument("--verbose", action="store_true", help="Show full LLM responses")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -287,7 +292,6 @@ def _cmd_prove():
     (work_dir, theorem_text, lean_theorem_text, proof_md_text,
      mode, resuming, read_only) = _resolve_inputs(parser, args)
 
-
     # ── On resume, load saved config and apply as defaults ──
     if resuming:
         saved = _load_run_config(work_dir)
@@ -315,8 +319,6 @@ def _cmd_prove():
                 args.conclude_after = saved.get("conclude_after", args.conclude_after)
             if not _cli_flag_given("-P", "--parallelism"):
                 args.parallelism = saved.get("parallelism", args.parallelism)
-            if not _cli_flag_given("--give-up-after"):
-                args.give_up_after = saved.get("give_up_ratio", args.give_up_after)
             if not _cli_flag_given("--isolation", "--no-isolation"):
                 args.isolation = saved.get("isolation", args.isolation)
             if not _cli_flag_given("--autonomous"):
@@ -359,6 +361,33 @@ def _cmd_prove():
     planner_model = args.planner_model or args.model
     worker_model = args.worker_model or args.model
 
+    # Validate and resolve --effort
+    effort_given = _cli_flag_given("--effort")
+    if effort_given:
+        non_claude = [m for m in (planner_model, worker_model) if m not in CLAUDE_MODELS]
+        if non_claude:
+            parser.error(
+                f"--effort is only supported for Claude models (sonnet, opus); "
+                f"got: {', '.join(non_claude)}"
+            )
+        effective_effort = args.effort
+    else:
+        # Auto-default: highest level for the models in use
+        claude_models_used = [m for m in (planner_model, worker_model) if m in CLAUDE_MODELS]
+        if claude_models_used:
+            effective_effort = "max" if any(m == "opus" for m in claude_models_used) else "high"
+        else:
+            effective_effort = None
+
+    # --on-budget-out is only meaningful for Claude models
+    if _cli_flag_given("--on-budget-out"):
+        non_claude = [m for m in (planner_model, worker_model) if m not in CLAUDE_MODELS]
+        if non_claude:
+            parser.error(
+                f"--on-budget-out is only supported for Claude models (sonnet, opus); "
+                f"got: {', '.join(non_claude)}"
+            )
+
     # literature_search is executed by the worker backend, so web-search
     # capability must be checked against the worker model rather than the
     # planner model. Older runs may have saved --no-isolation with a local
@@ -391,7 +420,7 @@ def _cmd_prove():
         if not args.lean_project:
             parser.error("--lean-worker-tools requires --lean-project")
         if worker_model not in TOOL_CAPABLE_MODELS:
-            parser.error("--lean-worker-tools requires a tool-capable worker model (sonnet, opus, or minimax-m2.5)")
+            parser.error("--lean-worker-tools requires a tool-capable worker model (sonnet, opus, minimax-m2.5, or leanstral)")
         # Auto-fetch Lean Explore data if not available
         from .lean.data import is_lean_data_available, fetch_lean_data
         if not is_lean_data_available():
@@ -401,7 +430,13 @@ def _cmd_prove():
                 print("Warning: lean_search will not be available")
 
     def _make_client(model_alias, archive_dir):
-        if model_alias in HF_MODEL_MAP:
+        if model_alias in MISTRAL_MODEL_MAP:
+            client = MistralClient(
+                MISTRAL_MODEL_MAP[model_alias],
+                archive_dir,
+                answer_reserve=args.answer_reserve,
+            )
+        elif model_alias in HF_MODEL_MAP:
             client = HFClient(
                 HF_MODEL_MAP[model_alias],
                 archive_dir,
@@ -410,7 +445,7 @@ def _cmd_prove():
                 vllm=model_alias in VLLM_MODELS,
             )
         else:
-            client = LLMClient(model_alias, archive_dir)
+            client = LLMClient(model_alias, archive_dir, effort=effective_effort)
         client.model_alias = model_alias
         return client
 
@@ -420,7 +455,7 @@ def _cmd_prove():
     def make_worker_llm(archive_dir):
         return _make_client(worker_model, archive_dir)
 
-    MODEL_DISPLAY = {"sonnet": "sonnet 4.6", "opus": "opus 4.6"}
+    MODEL_DISPLAY = {"sonnet": "sonnet 4.6", "opus": "opus 4.6", "leanstral": "leanstral"}
     _p = MODEL_DISPLAY.get(planner_model, planner_model)
     _w = MODEL_DISPLAY.get(worker_model, worker_model)
     model_label = _p if planner_model == worker_model else f"{_p}/{_w}"
@@ -444,7 +479,6 @@ def _cmd_prove():
         mode=budget_mode,
         limit=budget_limit,
         conclude_after=args.conclude_after,
-        give_up_after=args.give_up_after,
     )
 
     # Save config on fresh start
@@ -458,7 +492,6 @@ def _cmd_prove():
             budget_limit=budget_limit,
             conclude_after=args.conclude_after,
             parallelism=args.parallelism,
-            give_up_ratio=args.give_up_after,
             isolation=args.isolation,
             autonomous=args.autonomous,
             mode=mode,
@@ -490,6 +523,8 @@ def _cmd_prove():
         lean_items=args.lean_items,
         lean_worker_tools=args.lean_worker_tools,
         history_budget=args.history_budget,
+        on_budget_out=args.on_budget_out,
+        on_rate_limited=args.on_rate_limited,
     )
 
     # Clear the early status line before TUI takes over

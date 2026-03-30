@@ -21,12 +21,14 @@ class LLMClient:
     context_length = 200_000  # Claude models
 
     def __init__(self, model: str, archive_dir: Path,
-                 max_output_tokens: int = 128_000):
+                 max_output_tokens: int = 128_000,
+                 effort: str | None = None):
         self.model = model
         self.archive_dir = archive_dir
         self.call_count = 0
         self.total_cost = 0.0
         self.max_output_tokens = max_output_tokens
+        self.effort = effort
         self.mcp_config: dict | None = None  # set by Prover for MCP tool-calling
         self._interrupted = threading.Event()
         self._soft_interrupted = threading.Event()
@@ -37,6 +39,8 @@ class LLMClient:
             **os.environ,
             "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max_output_tokens),
         }
+        if effort:
+            self._env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
 
     def interrupt(self):
         """Signal all active LLM calls to stop."""
@@ -81,7 +85,8 @@ class LLMClient:
         archive_path: Path | None = None,
         tool_callback=None,
         tool_start_callback=None,
-        max_tokens: int | None = None,  # ignored - CLI uses max_output_tokens from __init__
+        max_tokens: int | None = None,  # overrides max_output_tokens for this call
+        no_thinking: bool = False,      # disable extended thinking for this call
     ) -> dict:
         """Make an LLM call and archive it.
 
@@ -141,6 +146,14 @@ class LLMClient:
         if json_schema:
             cmd.extend(["--json-schema", json.dumps(json_schema)])
 
+        env = self._env
+        if max_tokens:
+            env = {**self._env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max_tokens)}
+        if no_thinking:
+            env = {**env,
+                   "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
+                   "MAX_THINKING_TOKENS": "0"}
+
         start = time.time()
 
         if use_streaming:
@@ -149,11 +162,12 @@ class LLMClient:
                 call_num, label, start, stream_callback, archive_path,
                 tool_callback=tool_callback,
                 tool_start_callback=tool_start_callback,
+                env=env,
             )
 
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, env=self._env,
+            stderr=subprocess.PIPE, text=True, env=env,
             start_new_session=True,
         )
         with self._procs_lock:
@@ -232,7 +246,7 @@ class LLMClient:
 
     def _call_streaming(self, cmd, prompt, system_prompt, json_schema,
                         call_num, label, start, callback, archive_path=None,
-                        tool_callback=None, tool_start_callback=None):
+                        tool_callback=None, tool_start_callback=None, env=None):
         """Stream text deltas to callback, return final result.
 
         Args:
@@ -244,7 +258,8 @@ class LLMClient:
         """
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, bufsize=1, env=self._env,
+            stderr=subprocess.PIPE, text=True, bufsize=1,
+            env=env if env is not None else self._env,
             start_new_session=True,
         )
         with self._procs_lock:
@@ -400,11 +415,17 @@ class LLMClient:
 
         elapsed_ms = int((time.time() - start) * 1000)
 
-        # Catch race: flags set while readline() blocked
-        if not soft_interrupted and not interrupted and self._soft_interrupted.is_set():
-            soft_interrupted = True
-        if not interrupted and not soft_interrupted and self._interrupted.is_set():
-            interrupted = True
+        # Catch race: flags set while readline() was blocked.
+        # _soft_interrupted may have been cleared by a sibling worker thread that
+        # already reached Phase 2, so also treat a signal-killed process with no
+        # result as a soft interrupt (negative returncode = killed by SIGKILL).
+        if not soft_interrupted and not interrupted:
+            if self._soft_interrupted.is_set():
+                soft_interrupted = True
+            elif self._interrupted.is_set():
+                interrupted = True
+            elif result_data is None and proc.returncode is not None and proc.returncode < 0:
+                soft_interrupted = True
 
         if soft_interrupted:
             partial_text = "".join(result_parts)

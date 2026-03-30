@@ -3,10 +3,14 @@
 HF_MODEL_MAP = {
     "minimax-m2.5": "MiniMaxAI/MiniMax-M2.5",
 }
+MISTRAL_MODEL_MAP = {
+    "leanstral": "labs-leanstral-2603",
+}
 
 VLLM_MODELS = {"minimax-m2.5"}  # served via vLLM (standard OpenAI API)
+MISTRAL_MODELS = {"leanstral"}  # Mistral Conversations API
 CLAUDE_MODELS = {"sonnet", "opus"}
-TOOL_CAPABLE_MODELS = VLLM_MODELS | CLAUDE_MODELS
+TOOL_CAPABLE_MODELS = VLLM_MODELS | CLAUDE_MODELS | MISTRAL_MODELS
 
 
 def supports_web_search(model_alias: str) -> bool:
